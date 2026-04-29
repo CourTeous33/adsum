@@ -1,0 +1,11 @@
+[package]
+name = "adsum-hotkey"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+global-hotkey = { workspace = true }
+anyhow = { workspace = true }
+parking_lot = { workspace = true }

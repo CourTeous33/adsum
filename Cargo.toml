@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/adsum-app",
+    "crates/adsum-hotkey",
+    "crates/adsum-state",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+# GPUI: pinned to zed main HEAD as of 2026-04-28. Bumping the pin is a deliberate workspace decision.
+gpui = { git = "https://github.com/zed-industries/zed", rev = "3014170d7e4dfbe8379beda4dec92d6256b41209" }
+gpui-platform = { git = "https://github.com/zed-industries/zed", rev = "3014170d7e4dfbe8379beda4dec92d6256b41209", package = "gpui_platform" }
+global-hotkey = "0.5"
+anyhow = "1"
+parking_lot = "0.12"
+async-channel = "2"
+env_logger = "0.11"
