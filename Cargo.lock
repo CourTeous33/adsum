@@ -34,6 +34,16 @@ dependencies = [
 name = "adsum-chatbox"
 version = "0.1.0"
 dependencies = [
+ "adsum-state",
+ "adsum-tokens",
+ "gpui",
+]
+
+[[package]]
+name = "adsum-conversation"
+version = "0.1.0"
+dependencies = [
+ "adsum-state",
  "adsum-tokens",
  "gpui",
 ]
