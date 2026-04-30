@@ -31,6 +31,12 @@ impl Chatbox {
             return;
         }
 
+        if key == "enter" {
+            self.current_text = format!("echo: {}", self.current_text);
+            cx.notify();
+            return;
+        }
+
         if key == "backspace" {
             self.current_text.pop();
             cx.notify();
