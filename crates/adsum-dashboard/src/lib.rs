@@ -73,6 +73,7 @@ impl Render for Dashboard {
                         .child("Conversations"),
                 );
 
+            let selected_id = self.selected.as_ref().map(|s| s.id.clone());
             for (idx, summary) in self.summaries.iter().enumerate() {
                 let id = summary.id.clone();
                 let preview = if summary.first_user_text.is_empty() {
@@ -85,41 +86,60 @@ impl Render for Dashboard {
                 };
                 let turn_count = summary.turn_count;
                 let timestamp = format_relative_time(summary.created_at);
+                let is_selected = selected_id.as_ref() == Some(&summary.id);
 
+                // 3px left stripe is the selection indicator: accent color when
+                // selected, bg_primary (invisible against the panel bg) otherwise.
+                let stripe_color = if is_selected {
+                    adsum_tokens::accent()
+                } else {
+                    adsum_tokens::bg_primary()
+                };
+
+                let mut row = div()
+                    .id(("session-row", idx))
+                    .flex()
+                    .flex_row()
+                    .border_b_1()
+                    .border_color(adsum_tokens::border())
+                    .hover(|s| s.bg(adsum_tokens::bg_hover()))
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _event, _window, cx| {
+                            this.select(&id, cx);
+                        }),
+                    );
+                if is_selected {
+                    row = row.bg(adsum_tokens::bg_hover());
+                }
                 sidebar = sidebar.child(
-                    div()
-                        .id(("session-row", idx))
-                        .flex()
-                        .flex_col()
-                        .px_4()
-                        .py_3()
-                        .border_b_1()
-                        .border_color(adsum_tokens::border())
-                        .hover(|s| s.bg(adsum_tokens::bg_hover()))
-                        .cursor_pointer()
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, _event, _window, cx| {
-                                this.select(&id, cx);
-                            }),
-                        )
+                    row.child(div().w(px(3.0)).h_full().bg(stripe_color))
                         .child(
                             div()
-                                .text_size(px(adsum_tokens::TEXT_META))
-                                .text_color(adsum_tokens::text_muted())
-                                .child(timestamp),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(adsum_tokens::TEXT_BODY))
-                                .text_color(adsum_tokens::text_primary())
-                                .child(preview),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(adsum_tokens::TEXT_META))
-                                .text_color(adsum_tokens::text_dim())
-                                .child(format!("{turn_count} turns")),
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .px_4()
+                                .py_3()
+                                .child(
+                                    div()
+                                        .text_size(px(adsum_tokens::TEXT_META))
+                                        .text_color(adsum_tokens::text_muted())
+                                        .child(timestamp),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(adsum_tokens::TEXT_BODY))
+                                        .text_color(adsum_tokens::text_primary())
+                                        .child(preview),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(adsum_tokens::TEXT_META))
+                                        .text_color(adsum_tokens::text_dim())
+                                        .child(format!("{turn_count} turns")),
+                                ),
                         ),
                 );
             }
@@ -129,6 +149,7 @@ impl Render for Dashboard {
         // Detail pane
         let detail_pane = match &self.selected {
             Some(session) => {
+                let truncated_id: String = session.id.chars().take(8).collect();
                 let header = div()
                     .flex()
                     .flex_row()
@@ -148,6 +169,12 @@ impl Render for Dashboard {
                             .text_size(px(adsum_tokens::TEXT_META))
                             .text_color(adsum_tokens::text_dim())
                             .child(format!("{} turns", session.turns.len())),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(adsum_tokens::TEXT_META))
+                            .text_color(adsum_tokens::text_dim())
+                            .child(format!("id {truncated_id}")),
                     );
 
                 let mut transcript = div()

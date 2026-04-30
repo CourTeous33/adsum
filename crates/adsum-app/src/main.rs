@@ -72,6 +72,10 @@ fn open_dashboard(cx: &mut App) -> gpui::WindowHandle<Dashboard> {
         None => Bounds::new(point(Pixels::ZERO, Pixels::ZERO), dashboard_size),
     };
 
+    // Bring the app to the front so the dashboard window is summoned ON TOP of
+    // whatever the user is currently looking at, rather than being buried.
+    cx.activate(true);
+
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -83,7 +87,13 @@ fn open_dashboard(cx: &mut App) -> gpui::WindowHandle<Dashboard> {
             kind: WindowKind::Normal,
             ..Default::default()
         },
-        |window, cx| cx.new(|cx| Dashboard::new(window, cx)),
+        |window, cx| {
+            // Activate the window so it grabs platform-level focus immediately.
+            // Without this, the dashboard can open behind the active app on
+            // some macOS setups when summoned via the global hotkey.
+            window.activate_window();
+            cx.new(|cx| Dashboard::new(window, cx))
+        },
     )
     .unwrap()
 }

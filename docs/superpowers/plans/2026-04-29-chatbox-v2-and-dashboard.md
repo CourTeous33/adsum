@@ -2407,3 +2407,23 @@ If nothing needed stripping, skip this commit and note in the final report: "G3 
 - **GPUI Tailwind-like method names.** `gap_3`, `px_5`, `flex_1`, `overflow_y_scroll`, `border_t_1`, etc. should map to the values we want. If any are renamed at this pin, grep `~/.cargo/git/checkouts/zed-23861290b5d2093f/3014170/crates/gpui/src/elements/div.rs` and adapt locally without restructuring.
 - **Dashboard auto-refresh.** Sessions saved while the dashboard is visible won't appear in the list until the dashboard is closed and re-opened. This is a known limitation per the spec; if it bugs you in practice, follow-up adds a refresh-on-window-focus.
 - **`format!("{:?}", session.created_at)`** in the dashboard header is ugly. Replace with `chrono::DateTime` formatting in a follow-up if desired.
+
+---
+
+## Implementation deviations from spec (post-mortem)
+
+These changes from the original spec/plan emerged during implementation and user smoke. Recording them here so future engineers reading the spec aren't surprised by the code.
+
+1. **`adsum-chatbox` depends on `adsum-conversation`** (violates the spec's "no view crate touches another view crate" invariant). The chatbox view holds an `Arc<Mutex<Option<WindowHandle<Conversation>>>>` and calls `cx.open_window` directly to spawn the conversation panel on first Enter. The spec assumed view crates would be siblings under `adsum-app`. The actual code keeps the conversation-spawn logic local to where it's triggered (the chatbox's Enter handler). A cleaner refactor would inject an `on_turn_recorded` callback from `adsum-app` into `Chatbox::new`, eliminating the dep edge — left as follow-up work.
+
+2. **Single supervisor thread, not two** (spec's "two-supervisor-threads design" was unworkable on macOS). macOS only allows one `GlobalHotKeyManager` per process; spawning two managers fails with `Undefined error: 0 (os error 0)` and breaks both hotkeys. The `adsum-hotkey::Backend` trait was refactored: `register(spec)` → `register_all(specs)`, `next_event() -> Result<()>` → `Result<usize>`. One supervisor thread in `adsum-app` registers both hotkeys and dispatches on the index returned by `next_event`.
+
+3. **Two-window architecture, not one window with grow-on-Enter** (spec's chatbox grew from 80 to 560 on first Enter; pivoted to a separate Conversation window above the chatbox). The Zed pin's `Window::resize` only takes a `Size<Pixels>` (no origin shift), so resizing a bottom-anchored window grows it downward off-screen. The "always-expanded 720×560" fallback was tried first and rejected in user smoke ("transparent area looked weird"). Final design: chatbox stays 720×80 always, conversation lives in a separate 720×480 `WindowKind::PopUp` summoned on first Enter with `focus: false` so it doesn't steal focus from the chatbox.
+
+4. **`focus: false` on the conversation window** (not in the original spec). Without it, opening the new conversation window deactivates the chatbox, which trips the chatbox's `observe_window_activation` blur handler, which calls `remove_window`, which cascades through `on_window_closed` to also close the conversation — net effect: conversation window appears for one frame then both windows die.
+
+5. **`Dismiss` paths use `*slot.lock().unwrap()` (deref-and-copy)** rather than `.take()`. The `take()` pattern emptied the slot before `on_window_closed` could match the closed window's id, so the cascade-close-conversation logic never ran. `WindowHandle: Copy`, so the deref-and-copy preserves the slot for `on_window_closed` to clean up. (The original Phase F implementation used `.clone()`; `cargo clippy` later flagged `Copy` and the deref-and-copy form replaced it.)
+
+6. **`parse_key_spec` extended for letter keys a-z**. The salvaged hotkey crate only knew `space` and `l`. Adding the dashboard hotkey (`cmd+shift+d`) required teaching the parser about letters generally; a `letter_to_code` helper now maps any of `a-z` to `Code::KeyA..Z`.
+
+7. **Selected-row highlight in dashboard sidebar uses a leading 3px stripe div**, not per-side `border_l_color`. GPUI doesn't expose per-side border colors at this pin — `border_color` sets all four sides — so the stripe is implemented as the first child of a `flex_row` row container.
