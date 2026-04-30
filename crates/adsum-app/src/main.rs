@@ -78,13 +78,24 @@ fn run_example() {
         let state_for_close = state.clone();
         let slot_for_close = window_slot.clone();
         cx.on_window_closed(move |_cx, closed_window_id| {
-            let mut slot = slot_for_close.lock().unwrap();
-            if let Some(handle) = slot.as_ref() {
-                if handle.window_id() == closed_window_id {
-                    *slot = None;
-                    state_for_close.lock().unwrap().set_chatbox_visible(false);
+            let is_chatbox = {
+                let slot = slot_for_close.lock().unwrap();
+                slot.as_ref().is_some_and(|h| h.window_id() == closed_window_id)
+            }; // slot guard dropped here.
+            if !is_chatbox {
+                return;
+            }
+            // No locks currently held.
+            let session = state_for_close.lock().unwrap().take_session();
+            if let Some(s) = session {
+                if !s.turns.is_empty() {
+                    if let Err(err) = adsum_state::persistence::save_session(&s) {
+                        eprintln!("adsum-app: failed to save session {}: {err:#}", s.id);
+                    }
                 }
             }
+            *slot_for_close.lock().unwrap() = None;
+            state_for_close.lock().unwrap().set_chatbox_visible(false);
         })
         .detach();
 
@@ -116,6 +127,7 @@ fn run_example() {
                                 window.remove_window();
                             });
                         }
+                        state.lock().unwrap().start_session();
                         let handle = open_chatbox(cx);
                         *slot.lock().unwrap() = Some(handle);
                         state.lock().unwrap().set_chatbox_visible(true);
