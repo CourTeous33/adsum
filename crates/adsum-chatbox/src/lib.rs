@@ -1,6 +1,6 @@
 use gpui::{
     App, Context, FocusHandle, Focusable, KeyDownEvent, Render, Subscription, Window, div,
-    prelude::*, rgb,
+    prelude::*, px,
 };
 
 pub struct Chatbox {
@@ -79,23 +79,38 @@ impl Chatbox {
 
 impl Render for Chatbox {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let display_text = if self.current_text.is_empty() {
+            ("Ask Adsum…".to_string(), adsum_tokens::text_dim())
+        } else {
+            (self.current_text.clone(), adsum_tokens::text_primary())
+        };
+
         div()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|this, event, window, cx| {
                 this.handle_key_down(event, window, cx);
             }))
             .flex()
-            .flex_col()
-            .gap_3()
-            .bg(rgb(0x505050))
-            .size_full()
-            .justify_center()
+            .flex_row()
             .items_center()
-            .shadow_lg()
+            .gap_3()
+            .px_5()
+            .bg(adsum_tokens::bg_primary())
+            .rounded(px(adsum_tokens::RADIUS_CHATBOX))
+            .size_full()
             .border_1()
-            .border_color(rgb(0x0000ff))
-            .text_xl()
-            .text_color(rgb(0xffffff))
-            .child(self.current_text.clone())
+            .border_color(adsum_tokens::border())
+            .shadow_lg()
+            .text_size(px(adsum_tokens::TEXT_INPUT))
+            .child(
+                div()
+                    .text_color(adsum_tokens::accent())
+                    .child("▸"),
+            )
+            .child(
+                div()
+                    .text_color(display_text.1)
+                    .child(display_text.0),
+            )
     }
 }

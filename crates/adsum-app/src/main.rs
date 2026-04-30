@@ -1,7 +1,8 @@
 use adsum_chatbox::Chatbox;
 use adsum_state::{AppState, SummonAction};
 use gpui::{
-    App, Bounds, Pixels, WindowBounds, WindowKind, WindowOptions, point, prelude::*, px, size,
+    App, Bounds, Pixels, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions,
+    point, prelude::*, px, size,
 };
 use gpui_platform::application;
 use std::sync::{Arc, Mutex};
@@ -36,6 +37,7 @@ fn open_chatbox(cx: &mut App) -> gpui::WindowHandle<Chatbox> {
             titlebar: None,
             is_resizable: false,
             kind: WindowKind::PopUp,
+            window_background: WindowBackgroundAppearance::Transparent,
             ..Default::default()
         },
         |window, cx| cx.new(|cx| Chatbox::new(window, cx)),
