@@ -27,6 +27,11 @@ impl Chatbox {
             return;
         }
 
+        if key == "q" && modifiers.platform {
+            cx.quit();
+            return;
+        }
+
         if modifiers.platform || modifiers.control || modifiers.alt {
             return;
         }
