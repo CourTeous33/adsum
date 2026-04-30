@@ -45,6 +45,7 @@ fn run_example() {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: None,
                 ..Default::default()
             },
             |_, cx| {
