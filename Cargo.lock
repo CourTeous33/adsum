@@ -23,6 +23,7 @@ version = "0.1.0"
 dependencies = [
  "adsum-chatbox",
  "adsum-conversation",
+ "adsum-dashboard",
  "adsum-hotkey",
  "adsum-state",
  "async-channel 2.5.0",

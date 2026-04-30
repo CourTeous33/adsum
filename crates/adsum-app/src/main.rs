@@ -1,19 +1,21 @@
 use adsum_chatbox::Chatbox;
 use adsum_conversation::Conversation;
+use adsum_dashboard::Dashboard;
 use adsum_state::{AppState, SummonAction};
 use gpui::{
-    App, Bounds, Pixels, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions,
-    point, prelude::*, px, size,
+    App, Bounds, Pixels, TitlebarOptions, WindowBackgroundAppearance, WindowBounds, WindowKind,
+    WindowOptions, point, prelude::*, px, size,
 };
 use gpui_platform::application;
 use std::sync::{Arc, Mutex};
 
-fn show_hotkey_failure_notification() {
+fn show_hotkey_failure_notification(hotkey: &str) {
+    let body = format!(
+        "Adsum couldn't register the global hotkey {hotkey}. Check Accessibility permissions in System Settings.",
+    );
+    let osa = format!("display notification \"{body}\" with title \"Adsum\"");
     let _ = std::process::Command::new("osascript")
-        .args([
-            "-e",
-            "display notification \"Adsum couldn't register the global hotkey. Check Accessibility permissions in System Settings.\" with title \"Adsum\"",
-        ])
+        .args(["-e", &osa])
         .status();
 }
 
@@ -56,18 +58,60 @@ fn open_chatbox(
     .unwrap()
 }
 
+fn open_dashboard(cx: &mut App) -> gpui::WindowHandle<Dashboard> {
+    let dashboard_size = size(px(1024.0), px(720.0));
+    let bounds = match cx.primary_display() {
+        Some(display) => {
+            let display_bounds = display.bounds();
+            let origin = point(
+                display_bounds.origin.x
+                    + (display_bounds.size.width - dashboard_size.width) / 2.0,
+                display_bounds.origin.y
+                    + (display_bounds.size.height - dashboard_size.height) / 2.0,
+            );
+            Bounds::new(origin, dashboard_size)
+        }
+        None => Bounds::new(point(Pixels::ZERO, Pixels::ZERO), dashboard_size),
+    };
+
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: Some("Adsum".into()),
+                ..Default::default()
+            }),
+            is_resizable: true,
+            kind: WindowKind::Normal,
+            ..Default::default()
+        },
+        |window, cx| cx.new(|cx| Dashboard::new(window, cx)),
+    )
+    .unwrap()
+}
+
 fn run_example() {
     env_logger::init();
 
-    let (summon_tx, summon_rx) = async_channel::unbounded::<()>();
+    // Both hotkeys share a single supervisor thread (and a single underlying
+    // GlobalHotKeyManager — macOS only allows one per process). The supervisor
+    // dispatches by index; index 0 = chatbox, index 1 = dashboard.
+    let (chatbox_summon_tx, chatbox_summon_rx) = async_channel::unbounded::<()>();
+    let (dashboard_summon_tx, dashboard_summon_rx) = async_channel::unbounded::<()>();
     let (exhausted_tx, exhausted_rx) = async_channel::bounded::<()>(1);
 
     std::thread::spawn(move || {
         let outcome = adsum_hotkey::supervisor::Supervisor::run(
-            "cmd+shift+space",
+            &["cmd+shift+space", "cmd+shift+d"],
             || Box::new(adsum_hotkey::RealBackend::new()),
-            || {
-                let _ = summon_tx.send_blocking(());
+            move |idx| match idx {
+                0 => {
+                    let _ = chatbox_summon_tx.send_blocking(());
+                }
+                1 => {
+                    let _ = dashboard_summon_tx.send_blocking(());
+                }
+                other => eprintln!("adsum-app: unexpected hotkey index {other}"),
             },
         );
         eprintln!("hotkey supervisor exited: {outcome:?}");
@@ -77,30 +121,31 @@ fn run_example() {
     application().run(move |cx: &mut App| {
         cx.activate(true);
 
+        // Shared app state + three window slots.
         let state = Arc::new(Mutex::new(AppState::default()));
         let chatbox_slot: Arc<Mutex<Option<gpui::WindowHandle<Chatbox>>>> =
             Arc::new(Mutex::new(None));
         let conversation_slot: Arc<Mutex<Option<gpui::WindowHandle<Conversation>>>> =
             Arc::new(Mutex::new(None));
+        let dashboard_slot: Arc<Mutex<Option<gpui::WindowHandle<Dashboard>>>> =
+            Arc::new(Mutex::new(None));
 
-        // Register a single global on_window_closed handler. When the chatbox
-        // closes by ANY means (Esc, blur, system close), clear the slot and
-        // mark it not visible in AppState. Closing the chatbox cascades to
-        // closing the conversation window (if any).
-        //
-        // When the conversation closes (either cascaded or by some other
-        // means), just clear its slot — the chatbox is independent.
+        // Global on_window_closed handler. Three branches: chatbox close
+        // cascades to conversation close + saves session; conversation close
+        // just clears its slot; dashboard close just clears its slot and
+        // marks it not visible in AppState.
         let state_for_close = state.clone();
         let chatbox_slot_close = chatbox_slot.clone();
         let conversation_slot_close = conversation_slot.clone();
+        let dashboard_slot_close = dashboard_slot.clone();
         cx.on_window_closed(move |cx, closed_window_id| {
-            // Was it the chatbox?
+            // Was it the chatbox? Save session, clear slot, mark hidden,
+            // cascade-close conversation.
             let is_chatbox = {
                 let slot = chatbox_slot_close.lock().unwrap();
                 slot.as_ref().is_some_and(|h| h.window_id() == closed_window_id)
             }; // slot guard dropped here.
             if is_chatbox {
-                // No locks currently held.
                 let session = state_for_close.lock().unwrap().take_session();
                 if let Some(s) = session {
                     if !s.turns.is_empty() {
@@ -132,29 +177,43 @@ fn run_example() {
             };
             if is_conversation {
                 *conversation_slot_close.lock().unwrap() = None;
+                return;
+            }
+
+            // Was it the dashboard? Clear its slot and mark hidden in state.
+            let is_dashboard = {
+                let slot = dashboard_slot_close.lock().unwrap();
+                slot.as_ref().is_some_and(|h| h.window_id() == closed_window_id)
+            };
+            if is_dashboard {
+                *dashboard_slot_close.lock().unwrap() = None;
+                state_for_close.lock().unwrap().set_dashboard_visible(false);
             }
         })
         .detach();
 
+        // Single hotkey-failure pump. Both hotkeys share the supervisor;
+        // failure to register either is fatal for both.
         let exhausted_rx = exhausted_rx.clone();
-        cx.spawn(async move |_async_cx| {
+        cx.spawn(async move |_| {
             if exhausted_rx.recv().await.is_ok() {
-                show_hotkey_failure_notification();
+                show_hotkey_failure_notification("cmd+shift+space or cmd+shift+d");
                 std::process::exit(1);
             }
         })
         .detach();
 
-        let summon_rx = summon_rx.clone();
-        let state_for_loop = state.clone();
-        let slot_for_loop = chatbox_slot.clone();
-        let conv_slot_for_loop = conversation_slot.clone();
+        // Chatbox summon pump.
+        let chatbox_summon_rx = chatbox_summon_rx.clone();
+        let state_for_chatbox = state.clone();
+        let chatbox_slot_for_loop = chatbox_slot.clone();
+        let conv_slot_for_chatbox = conversation_slot.clone();
         cx.spawn(async move |async_cx| {
-            while let Ok(()) = summon_rx.recv().await {
-                let action = state_for_loop.lock().unwrap().handle_chatbox_summon();
-                let state = state_for_loop.clone();
-                let slot = slot_for_loop.clone();
-                let conv_slot = conv_slot_for_loop.clone();
+            while let Ok(()) = chatbox_summon_rx.recv().await {
+                let action = state_for_chatbox.lock().unwrap().handle_chatbox_summon();
+                let state = state_for_chatbox.clone();
+                let slot = chatbox_slot_for_loop.clone();
+                let conv_slot = conv_slot_for_chatbox.clone();
                 async_cx.update(move |cx: &mut App| match action {
                     SummonAction::Open => {
                         // Defensive: if a stale handle is in the slot (state
@@ -187,6 +246,43 @@ fn run_example() {
                         }
                         // No state/slot updates here — on_window_closed does
                         // them when the chatbox window actually closes.
+                    }
+                });
+            }
+        })
+        .detach();
+
+        // Dashboard summon pump.
+        let dashboard_summon_rx = dashboard_summon_rx.clone();
+        let state_for_dashboard = state.clone();
+        let dashboard_slot_for_loop = dashboard_slot.clone();
+        cx.spawn(async move |async_cx| {
+            while let Ok(()) = dashboard_summon_rx.recv().await {
+                let action = state_for_dashboard.lock().unwrap().handle_dashboard_summon();
+                let state = state_for_dashboard.clone();
+                let slot = dashboard_slot_for_loop.clone();
+                async_cx.update(move |cx: &mut App| match action {
+                    SummonAction::Open => {
+                        let stale = slot.lock().unwrap().take();
+                        if let Some(stale_handle) = stale {
+                            let _ = stale_handle.update(cx, |_view, window, _cx| {
+                                window.remove_window();
+                            });
+                        }
+                        let handle = open_dashboard(cx);
+                        *slot.lock().unwrap() = Some(handle);
+                        state.lock().unwrap().set_dashboard_visible(true);
+                    }
+                    SummonAction::Dismiss => {
+                        // Clone (not take) for the same reason as the chatbox
+                        // path: on_window_closed needs the slot populated to
+                        // identify the closed window as the dashboard.
+                        let handle_opt = slot.lock().unwrap().clone();
+                        if let Some(handle) = handle_opt {
+                            let _ = handle.update(cx, |_view, window, _cx| {
+                                window.remove_window();
+                            });
+                        }
                     }
                 });
             }

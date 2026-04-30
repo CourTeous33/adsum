@@ -10,6 +10,7 @@ adsum-state = { path = "../adsum-state" }
 adsum-hotkey = { path = "../adsum-hotkey" }
 adsum-chatbox = { path = "../adsum-chatbox" }
 adsum-conversation = { path = "../adsum-conversation" }
+adsum-dashboard = { path = "../adsum-dashboard" }
 gpui = { workspace = true }
 gpui-platform = { workspace = true }
 async-channel = { workspace = true }
