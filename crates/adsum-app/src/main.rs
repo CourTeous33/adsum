@@ -1,14 +1,11 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
 use gpui::{
-    App, Bounds, Context, SharedString, Window, WindowBounds, WindowOptions, div, prelude::*, px,
-    rgb, size,
+    App, Bounds, Context, Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
 };
 use gpui_platform::application;
 
-struct Chatbox {
-    text: SharedString,
-}
+struct Chatbox {}
 
 impl Render for Chatbox {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
@@ -25,7 +22,7 @@ impl Render for Chatbox {
             .border_color(rgb(0x0000ff))
             .text_xl()
             .text_color(rgb(0xffffff))
-            .child(format!("Hello, {}!", &self.text))
+            .child("Type here…")
             .child(
                 div()
                     .flex()
@@ -98,9 +95,7 @@ fn run_example() {
                 ..Default::default()
             },
             |_, cx| {
-                cx.new(|_| Chatbox {
-                    text: "World".into(),
-                })
+                cx.new(|_| Chatbox {})
             },
         )
         .unwrap();
