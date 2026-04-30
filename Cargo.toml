@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/adsum-app",
+    "crates/adsum-chatbox",
     "crates/adsum-hotkey",
     "crates/adsum-state",
 ]

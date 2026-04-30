@@ -1,93 +1,12 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
+use adsum_chatbox::Chatbox;
 use adsum_state::{AppState, SummonAction};
 use gpui::{
-    App, Bounds, Context, FocusHandle, Focusable, KeyDownEvent, Pixels, Subscription, Window,
-    WindowBounds, WindowKind, WindowOptions, div, point, prelude::*, px, rgb, size,
+    App, Bounds, Pixels, WindowBounds, WindowKind, WindowOptions, point, prelude::*, px, size,
 };
 use gpui_platform::application;
 use std::sync::{Arc, Mutex};
-
-struct Chatbox {
-    current_text: String,
-    focus_handle: FocusHandle,
-    _activation_subscription: Subscription,
-}
-
-impl Focusable for Chatbox {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-impl Chatbox {
-    fn handle_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let key = &event.keystroke.key;
-        let modifiers = event.keystroke.modifiers;
-
-        if key == "escape" {
-            window.remove_window();
-            return;
-        }
-
-        if key == "q" && modifiers.platform {
-            cx.quit();
-            return;
-        }
-
-        if modifiers.platform || modifiers.control || modifiers.alt {
-            return;
-        }
-
-        if key == "enter" {
-            self.current_text = format!("echo: {}", self.current_text);
-            cx.notify();
-            return;
-        }
-
-        if key == "backspace" {
-            self.current_text.pop();
-            cx.notify();
-            return;
-        }
-
-        if matches!(key.as_str(), "up" | "down" | "left" | "right") {
-            return;
-        }
-
-        if key.chars().count() == 1 {
-            if let Some(ch) = key.chars().next() {
-                if !ch.is_control() {
-                    self.current_text.push(ch);
-                    cx.notify();
-                }
-            }
-        }
-    }
-}
-
-impl Render for Chatbox {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(|this, event, window, cx| {
-                this.handle_key_down(event, window, cx);
-            }))
-            .flex()
-            .flex_col()
-            .gap_3()
-            .bg(rgb(0x505050))
-            .size_full()
-            .justify_center()
-            .items_center()
-            .shadow_lg()
-            .border_1()
-            .border_color(rgb(0x0000ff))
-            .text_xl()
-            .text_color(rgb(0xffffff))
-            .child(self.current_text.clone())
-    }
-}
 
 fn open_chatbox(cx: &mut App) -> gpui::WindowHandle<Chatbox> {
     let chatbox_size = size(px(600.0), px(80.0));
@@ -112,23 +31,7 @@ fn open_chatbox(cx: &mut App) -> gpui::WindowHandle<Chatbox> {
             kind: WindowKind::PopUp,
             ..Default::default()
         },
-        |window, cx| {
-            cx.new(|cx| {
-                let focus_handle = cx.focus_handle();
-                window.focus(&focus_handle, cx);
-                let activation_subscription =
-                    cx.observe_window_activation(window, |_this, window, _cx| {
-                        if !window.is_window_active() {
-                            window.remove_window();
-                        }
-                    });
-                Chatbox {
-                    current_text: String::new(),
-                    focus_handle,
-                    _activation_subscription: activation_subscription,
-                }
-            })
-        },
+        |window, cx| cx.new(|cx| Chatbox::new(window, cx)),
     )
     .unwrap()
 }

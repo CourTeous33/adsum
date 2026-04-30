@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 adsum-state = { path = "../adsum-state" }
 adsum-hotkey = { path = "../adsum-hotkey" }
+adsum-chatbox = { path = "../adsum-chatbox" }
 gpui = { workspace = true }
 gpui-platform = { workspace = true }
 async-channel = { workspace = true }
