@@ -91,31 +91,109 @@ impl Chatbox {
 
 impl Render for Chatbox {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let turns: Vec<(String, String)> = {
+            let state = self.state.lock().unwrap();
+            state
+                .current_session()
+                .map(|s| {
+                    s.turns
+                        .iter()
+                        .map(|t| (t.user_text.clone(), t.response.clone()))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+
         let display_text = if self.current_text.is_empty() {
             ("Ask Adsum…".to_string(), adsum_tokens::text_dim())
         } else {
             (self.current_text.clone(), adsum_tokens::text_primary())
         };
 
-        // Compact-state render only — Task 10 adds the expanded transcript.
-        div()
-            .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(|this, event, window, cx| {
-                this.handle_key_down(event, window, cx);
-            }))
+        let input_row = div()
             .flex()
             .flex_row()
             .items_center()
             .gap_3()
             .px_5()
+            .py_3()
+            .text_size(px(adsum_tokens::TEXT_INPUT))
+            .child(div().text_color(adsum_tokens::accent()).child("▸"))
+            .child(div().text_color(display_text.1).child(display_text.0));
+
+        let mut root = div()
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(|this, event, window, cx| {
+                this.handle_key_down(event, window, cx);
+            }))
+            .flex()
+            .flex_col()
             .bg(adsum_tokens::bg_primary())
             .rounded(px(adsum_tokens::RADIUS_CHATBOX))
             .size_full()
             .border_1()
             .border_color(adsum_tokens::border())
-            .shadow_lg()
-            .text_size(px(adsum_tokens::TEXT_INPUT))
-            .child(div().text_color(adsum_tokens::accent()).child("▸"))
-            .child(div().text_color(display_text.1).child(display_text.0))
+            .shadow_lg();
+
+        if !turns.is_empty() {
+            let mut transcript = div()
+                .id("transcript")
+                .flex()
+                .flex_col()
+                .gap_3()
+                .p_4()
+                .overflow_y_scroll()
+                .flex_1()
+                .text_size(px(adsum_tokens::TEXT_BODY));
+
+            for (user_text, response) in turns.iter() {
+                transcript = transcript
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .w(px(20.0))
+                                    .text_color(adsum_tokens::accent())
+                                    .child("▸"),
+                            )
+                            .child(
+                                div()
+                                    .text_color(adsum_tokens::text_primary())
+                                    .child(user_text.clone()),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .w(px(20.0))
+                                    .text_color(adsum_tokens::text_muted())
+                                    .child("◦"),
+                            )
+                            .child(
+                                div()
+                                    .text_color(adsum_tokens::text_primary())
+                                    .child(response.clone()),
+                            ),
+                    );
+            }
+
+            root = root.child(transcript).child(
+                div()
+                    .border_t_1()
+                    .border_color(adsum_tokens::border())
+                    .child(input_row),
+            );
+        } else {
+            root = root.child(input_row);
+        }
+
+        root
     }
 }
