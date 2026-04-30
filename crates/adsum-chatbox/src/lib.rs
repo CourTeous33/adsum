@@ -1,12 +1,15 @@
+use adsum_state::AppState;
 use gpui::{
     App, Context, FocusHandle, Focusable, KeyDownEvent, Render, Subscription, Window, div,
     prelude::*, px,
 };
+use std::sync::{Arc, Mutex};
 
 pub struct Chatbox {
     current_text: String,
     focus_handle: FocusHandle,
     _activation_subscription: Subscription,
+    state: Arc<Mutex<AppState>>,
 }
 
 impl Focusable for Chatbox {
@@ -16,7 +19,7 @@ impl Focusable for Chatbox {
 }
 
 impl Chatbox {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(state: Arc<Mutex<AppState>>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
         let activation_subscription =
@@ -29,10 +32,16 @@ impl Chatbox {
             current_text: String::new(),
             focus_handle,
             _activation_subscription: activation_subscription,
+            state,
         }
     }
 
-    fn handle_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn handle_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let key = &event.keystroke.key;
         let modifiers = event.keystroke.modifiers;
 
@@ -51,8 +60,11 @@ impl Chatbox {
         }
 
         if key == "enter" {
-            self.current_text = format!("echo: {}", self.current_text);
-            cx.notify();
+            if !self.current_text.is_empty() {
+                let user_text = std::mem::take(&mut self.current_text);
+                self.state.lock().unwrap().record_turn(user_text);
+                cx.notify();
+            }
             return;
         }
 
@@ -85,6 +97,7 @@ impl Render for Chatbox {
             (self.current_text.clone(), adsum_tokens::text_primary())
         };
 
+        // Compact-state render only — Task 10 adds the expanded transcript.
         div()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|this, event, window, cx| {
@@ -102,15 +115,7 @@ impl Render for Chatbox {
             .border_color(adsum_tokens::border())
             .shadow_lg()
             .text_size(px(adsum_tokens::TEXT_INPUT))
-            .child(
-                div()
-                    .text_color(adsum_tokens::accent())
-                    .child("▸"),
-            )
-            .child(
-                div()
-                    .text_color(display_text.1)
-                    .child(display_text.0),
-            )
+            .child(div().text_color(adsum_tokens::accent()).child("▸"))
+            .child(div().text_color(display_text.1).child(display_text.0))
     }
 }

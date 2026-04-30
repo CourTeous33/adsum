@@ -16,7 +16,7 @@ fn show_hotkey_failure_notification() {
         .status();
 }
 
-fn open_chatbox(cx: &mut App) -> gpui::WindowHandle<Chatbox> {
+fn open_chatbox(state: Arc<Mutex<AppState>>, cx: &mut App) -> gpui::WindowHandle<Chatbox> {
     let chatbox_size = size(px(720.0), px(80.0));
     let bounds = match cx.primary_display() {
         Some(display) => {
@@ -42,7 +42,10 @@ fn open_chatbox(cx: &mut App) -> gpui::WindowHandle<Chatbox> {
             window_background: WindowBackgroundAppearance::Transparent,
             ..Default::default()
         },
-        |window, cx| cx.new(|cx| Chatbox::new(window, cx)),
+        |window, cx| {
+            let state = state.clone();
+            cx.new(|cx| Chatbox::new(state, window, cx))
+        },
     )
     .unwrap()
 }
@@ -128,7 +131,7 @@ fn run_example() {
                             });
                         }
                         state.lock().unwrap().start_session();
-                        let handle = open_chatbox(cx);
+                        let handle = open_chatbox(state.clone(), cx);
                         *slot.lock().unwrap() = Some(handle);
                         state.lock().unwrap().set_chatbox_visible(true);
                     }

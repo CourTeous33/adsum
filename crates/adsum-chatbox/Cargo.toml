@@ -6,5 +6,6 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+adsum-state = { path = "../adsum-state" }
 adsum-tokens = { path = "../adsum-tokens" }
 gpui = { workspace = true }
