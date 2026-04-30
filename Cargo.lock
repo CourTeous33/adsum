@@ -51,6 +51,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "adsum-dashboard"
+version = "0.1.0"
+dependencies = [
+ "adsum-state",
+ "adsum-tokens",
+ "gpui",
+]
+
+[[package]]
 name = "adsum-hotkey"
 version = "0.1.0"
 dependencies = [

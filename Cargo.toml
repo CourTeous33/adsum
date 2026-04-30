@@ -4,6 +4,7 @@ members = [
     "crates/adsum-app",
     "crates/adsum-chatbox",
     "crates/adsum-conversation",
+    "crates/adsum-dashboard",
     "crates/adsum-hotkey",
     "crates/adsum-state",
     "crates/adsum-tokens",
