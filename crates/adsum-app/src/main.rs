@@ -6,7 +6,9 @@ use gpui::{
 };
 use gpui_platform::application;
 
-struct Chatbox {}
+struct Chatbox {
+    current_text: String,
+}
 
 impl Render for Chatbox {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
@@ -23,7 +25,7 @@ impl Render for Chatbox {
             .border_color(rgb(0x0000ff))
             .text_xl()
             .text_color(rgb(0xffffff))
-            .child("Type here…")
+            .child(self.current_text.clone())
     }
 }
 
@@ -51,7 +53,7 @@ fn run_example() {
                 ..Default::default()
             },
             |_, cx| {
-                cx.new(|_| Chatbox {})
+                cx.new(|_| Chatbox { current_text: String::new() })
             },
         )
         .unwrap();
