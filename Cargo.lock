@@ -22,6 +22,7 @@ name = "adsum-app"
 version = "0.1.0"
 dependencies = [
  "adsum-chatbox",
+ "adsum-conversation",
  "adsum-hotkey",
  "adsum-state",
  "async-channel 2.5.0",
@@ -34,6 +35,7 @@ dependencies = [
 name = "adsum-chatbox"
 version = "0.1.0"
 dependencies = [
+ "adsum-conversation",
  "adsum-state",
  "adsum-tokens",
  "gpui",

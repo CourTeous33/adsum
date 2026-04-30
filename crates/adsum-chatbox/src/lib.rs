@@ -1,7 +1,9 @@
+use adsum_conversation::Conversation;
 use adsum_state::AppState;
 use gpui::{
-    App, Context, FocusHandle, Focusable, KeyDownEvent, Render, Subscription, Window, div,
-    prelude::*, px,
+    App, Bounds, Context, FocusHandle, Focusable, KeyDownEvent, Pixels, Render, Subscription,
+    Window, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, div, point,
+    prelude::*, px, size,
 };
 use std::sync::{Arc, Mutex};
 
@@ -10,6 +12,7 @@ pub struct Chatbox {
     focus_handle: FocusHandle,
     _activation_subscription: Subscription,
     state: Arc<Mutex<AppState>>,
+    conversation_slot: Arc<Mutex<Option<gpui::WindowHandle<Conversation>>>>,
 }
 
 impl Focusable for Chatbox {
@@ -19,7 +22,12 @@ impl Focusable for Chatbox {
 }
 
 impl Chatbox {
-    pub fn new(state: Arc<Mutex<AppState>>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        state: Arc<Mutex<AppState>>,
+        conversation_slot: Arc<Mutex<Option<gpui::WindowHandle<Conversation>>>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
         let activation_subscription =
@@ -33,6 +41,7 @@ impl Chatbox {
             focus_handle,
             _activation_subscription: activation_subscription,
             state,
+            conversation_slot,
         }
     }
 
@@ -49,12 +58,10 @@ impl Chatbox {
             window.remove_window();
             return;
         }
-
         if key == "q" && modifiers.platform {
             cx.quit();
             return;
         }
-
         if modifiers.platform || modifiers.control || modifiers.alt {
             return;
         }
@@ -63,27 +70,43 @@ impl Chatbox {
             if !self.current_text.is_empty() {
                 let user_text = std::mem::take(&mut self.current_text);
                 self.state.lock().unwrap().record_turn(user_text);
+
+                // Ensure the conversation window is open and notify it of the
+                // new turn. Take the handle clone in a standalone statement so
+                // the MutexGuard drops at the `;` before any GPUI calls — we
+                // must NOT hold the slot lock across cx.open_window /
+                // handle.update (those can fire on_window_closed synchronously
+                // and re-enter the slot lock).
+                let conv_handle = self.conversation_slot.lock().unwrap().clone();
+                match conv_handle {
+                    Some(handle) => {
+                        // Existing window — trigger re-render.
+                        let _ = handle.update(cx, |_view, _window, cx| cx.notify());
+                    }
+                    None => {
+                        // Open a new conversation window.
+                        let new_handle = open_conversation_window(self.state.clone(), cx);
+                        *self.conversation_slot.lock().unwrap() = Some(new_handle);
+                    }
+                }
+
                 cx.notify();
             }
             return;
         }
-
         if key == "backspace" {
             self.current_text.pop();
             cx.notify();
             return;
         }
-
         if matches!(key.as_str(), "up" | "down" | "left" | "right") {
             return;
         }
-
         if key == "space" {
             self.current_text.push(' ');
             cx.notify();
             return;
         }
-
         if key.chars().count() == 1 {
             if let Some(ch) = key.chars().next() {
                 if !ch.is_control() {
@@ -97,136 +120,69 @@ impl Chatbox {
 
 impl Render for Chatbox {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let turns: Vec<(String, String)> = {
-            let state = self.state.lock().unwrap();
-            state
-                .current_session()
-                .map(|s| {
-                    s.turns
-                        .iter()
-                        .map(|t| (t.user_text.clone(), t.response.clone()))
-                        .collect()
-                })
-                .unwrap_or_default()
-        };
-
         let display_text = if self.current_text.is_empty() {
             ("Ask Adsum…".to_string(), adsum_tokens::text_dim())
         } else {
             (self.current_text.clone(), adsum_tokens::text_primary())
         };
 
-        // The input panel (a self-contained styled bar). Used by both states.
-        let input_panel = div()
+        div()
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(|this, event, window, cx| {
+                this.handle_key_down(event, window, cx);
+            }))
             .flex()
             .flex_row()
             .items_center()
             .gap_3()
             .px_5()
-            .h(px(80.0))
             .bg(adsum_tokens::bg_primary())
             .rounded(px(adsum_tokens::RADIUS_CHATBOX))
+            .size_full()
             .border_1()
             .border_color(adsum_tokens::border())
             .shadow_lg()
             .text_size(px(adsum_tokens::TEXT_INPUT))
             .child(div().text_color(adsum_tokens::accent()).child("▸"))
-            .child(div().text_color(display_text.1).child(display_text.0.clone()));
-
-        // Outer root: holds focus + key handler + size_full. No bg/border so the
-        // transparent window background shows through in compact state.
-        let root = div()
-            .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(|this, event, window, cx| {
-                this.handle_key_down(event, window, cx);
-            }))
-            .size_full()
-            .flex()
-            .flex_col();
-
-        if turns.is_empty() {
-            // COMPACT: transparent space above, input panel anchored at bottom.
-            root.justify_end().child(input_panel)
-        } else {
-            // EXPANDED: full opaque panel filling the window. Transcript above
-            // the input row, divider between.
-            // Transcript region needs an `id` to use overflow_y_scroll (which
-            // requires Stateful<Div>).
-            let mut transcript = div()
-                .id("transcript")
-                .flex()
-                .flex_col()
-                .gap_3()
-                .p_4()
-                .overflow_y_scroll()
-                .flex_1()
-                .text_size(px(adsum_tokens::TEXT_BODY));
-
-            for (user_text, response) in turns.iter() {
-                transcript = transcript
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .w(px(20.0))
-                                    .text_color(adsum_tokens::accent())
-                                    .child("▸"),
-                            )
-                            .child(
-                                div()
-                                    .text_color(adsum_tokens::text_primary())
-                                    .child(user_text.clone()),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .w(px(20.0))
-                                    .text_color(adsum_tokens::text_muted())
-                                    .child("◦"),
-                            )
-                            .child(
-                                div()
-                                    .text_color(adsum_tokens::text_primary())
-                                    .child(response.clone()),
-                            ),
-                    );
-            }
-
-            // The input row inside the expanded panel — same layout as the
-            // standalone input_panel but without its own bg/border (it's
-            // inside the panel already).
-            let input_row = div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_3()
-                .px_5()
-                .py_3()
-                .text_size(px(adsum_tokens::TEXT_INPUT))
-                .child(div().text_color(adsum_tokens::accent()).child("▸"))
-                .child(div().text_color(display_text.1).child(display_text.0));
-
-            root
-                .bg(adsum_tokens::bg_primary())
-                .rounded(px(adsum_tokens::RADIUS_CHATBOX))
-                .border_1()
-                .border_color(adsum_tokens::border())
-                .shadow_lg()
-                .child(transcript)
-                .child(
-                    div()
-                        .border_t_1()
-                        .border_color(adsum_tokens::border())
-                        .child(input_row),
-                )
-        }
+            .child(div().text_color(display_text.1).child(display_text.0))
     }
+}
+
+/// Open a fresh Conversation window positioned directly above the chatbox.
+fn open_conversation_window(
+    state: Arc<Mutex<AppState>>,
+    cx: &mut App,
+) -> gpui::WindowHandle<Conversation> {
+    let conv_size = size(px(720.0), px(480.0));
+    let bounds = match cx.primary_display() {
+        Some(display) => {
+            let display_bounds = display.bounds();
+            let origin = point(
+                display_bounds.origin.x
+                    + (display_bounds.size.width - conv_size.width) / 2.0,
+                display_bounds.origin.y + display_bounds.size.height
+                    - conv_size.height
+                    - px(80.0)   // chatbox height
+                    - px(100.0), // gap above bottom edge
+            );
+            Bounds::new(origin, conv_size)
+        }
+        None => Bounds::new(point(Pixels::ZERO, Pixels::ZERO), conv_size),
+    };
+
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: None,
+            is_resizable: false,
+            kind: WindowKind::PopUp,
+            window_background: WindowBackgroundAppearance::Transparent,
+            ..Default::default()
+        },
+        |window, cx| {
+            let state = state.clone();
+            cx.new(|cx| Conversation::new(state, window, cx))
+        },
+    )
+    .unwrap()
 }

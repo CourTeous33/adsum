@@ -9,6 +9,7 @@ publish.workspace = true
 adsum-state = { path = "../adsum-state" }
 adsum-hotkey = { path = "../adsum-hotkey" }
 adsum-chatbox = { path = "../adsum-chatbox" }
+adsum-conversation = { path = "../adsum-conversation" }
 gpui = { workspace = true }
 gpui-platform = { workspace = true }
 async-channel = { workspace = true }
