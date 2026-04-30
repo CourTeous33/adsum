@@ -19,7 +19,10 @@ fn summon_when_hidden_signals_open() {
 #[test]
 fn default_state_is_hidden() {
     let state = AppState::default();
-    assert_eq!(state.handle_chatbox_summon(), adsum_state::SummonAction::Open);
+    assert_eq!(
+        state.handle_chatbox_summon(),
+        adsum_state::SummonAction::Open
+    );
 }
 
 #[test]
@@ -38,7 +41,10 @@ fn start_session_replaces_existing_session() {
     let first_id = state.current_session().unwrap().id.clone();
     state.start_session();
     let second_id = state.current_session().unwrap().id.clone();
-    assert_ne!(first_id, second_id, "second start_session should make a new id");
+    assert_ne!(
+        first_id, second_id,
+        "second start_session should make a new id"
+    );
 }
 
 #[test]
@@ -78,7 +84,13 @@ fn take_session_with_no_session_returns_none() {
 #[test]
 fn dashboard_visible_default_and_toggle() {
     let mut state = AppState::default();
-    assert_eq!(state.handle_dashboard_summon(), adsum_state::SummonAction::Open);
+    assert_eq!(
+        state.handle_dashboard_summon(),
+        adsum_state::SummonAction::Open
+    );
     state.set_dashboard_visible(true);
-    assert_eq!(state.handle_dashboard_summon(), adsum_state::SummonAction::Dismiss);
+    assert_eq!(
+        state.handle_dashboard_summon(),
+        adsum_state::SummonAction::Dismiss
+    );
 }

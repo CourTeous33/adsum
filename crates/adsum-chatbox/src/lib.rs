@@ -1,9 +1,9 @@
 use adsum_conversation::Conversation;
 use adsum_state::AppState;
 use gpui::{
-    App, Bounds, Context, FocusHandle, Focusable, KeyDownEvent, Pixels, Render, Subscription,
-    Window, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, div, point,
-    prelude::*, px, size,
+    div, point, prelude::*, px, size, App, Bounds, Context, FocusHandle, Focusable, KeyDownEvent,
+    Pixels, Render, Subscription, Window, WindowBackgroundAppearance, WindowBounds, WindowKind,
+    WindowOptions,
 };
 use std::sync::{Arc, Mutex};
 
@@ -30,12 +30,11 @@ impl Chatbox {
     ) -> Self {
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
-        let activation_subscription =
-            cx.observe_window_activation(window, |_this, window, _cx| {
-                if !window.is_window_active() {
-                    window.remove_window();
-                }
-            });
+        let activation_subscription = cx.observe_window_activation(window, |_this, window, _cx| {
+            if !window.is_window_active() {
+                window.remove_window();
+            }
+        });
         Self {
             current_text: String::new(),
             focus_handle,
@@ -77,7 +76,7 @@ impl Chatbox {
                 // must NOT hold the slot lock across cx.open_window /
                 // handle.update (those can fire on_window_closed synchronously
                 // and re-enter the slot lock).
-                let conv_handle = self.conversation_slot.lock().unwrap().clone();
+                let conv_handle = *self.conversation_slot.lock().unwrap();
                 match conv_handle {
                     Some(handle) => {
                         // Existing window — trigger re-render.
@@ -158,8 +157,7 @@ fn open_conversation_window(
         Some(display) => {
             let display_bounds = display.bounds();
             let origin = point(
-                display_bounds.origin.x
-                    + (display_bounds.size.width - conv_size.width) / 2.0,
+                display_bounds.origin.x + (display_bounds.size.width - conv_size.width) / 2.0,
                 display_bounds.origin.y + display_bounds.size.height
                     - conv_size.height
                     - px(80.0)   // chatbox height

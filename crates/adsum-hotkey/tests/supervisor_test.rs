@@ -55,7 +55,10 @@ fn supervisor_restarts_once_then_exits() {
 
     // Two register calls: original + one restart. Then giving up.
     assert_eq!(register_all_calls.lock().len(), 2);
-    assert!(matches!(outcome, adsum_hotkey::supervisor::Outcome::Exhausted));
+    assert!(matches!(
+        outcome,
+        adsum_hotkey::supervisor::Outcome::Exhausted
+    ));
     assert_eq!(fired.lock().len(), 0);
 }
 
@@ -75,11 +78,7 @@ fn supervisor_passes_key_specs_to_register_all() {
         }
     };
 
-    let _ = Supervisor::run(
-        &["cmd+shift+space", "cmd+shift+d"],
-        make_backend,
-        |_| {},
-    );
+    let _ = Supervisor::run(&["cmd+shift+space", "cmd+shift+d"], make_backend, |_| {});
 
     let calls = register_all_calls.lock();
     assert!(calls
@@ -110,11 +109,7 @@ fn supervisor_fires_callback_on_event_with_index() {
         move |idx: usize| fired.lock().push(idx)
     };
 
-    let _ = Supervisor::run(
-        &["cmd+shift+space", "cmd+shift+d"],
-        make_backend,
-        on_fire,
-    );
+    let _ = Supervisor::run(&["cmd+shift+space", "cmd+shift+d"], make_backend, on_fire);
 
     // 3 events fired before death; restart drains 0 more events; exhausts.
     assert_eq!(*fired.lock(), vec![0, 1, 0]);
@@ -152,5 +147,8 @@ fn supervisor_exhausts_when_registration_always_fails() {
     let outcome = Supervisor::run(&["cmd+shift+space"], make_backend, |_| {});
 
     assert_eq!(*attempts.lock(), 2);
-    assert!(matches!(outcome, adsum_hotkey::supervisor::Outcome::Exhausted));
+    assert!(matches!(
+        outcome,
+        adsum_hotkey::supervisor::Outcome::Exhausted
+    ));
 }

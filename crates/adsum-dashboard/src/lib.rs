@@ -2,7 +2,7 @@
 
 use adsum_state::persistence::{load_all_sessions, load_session, SessionSummary};
 use adsum_state::Session;
-use gpui::{Context, MouseButton, Render, Window, div, prelude::*, px};
+use gpui::{div, prelude::*, px, Context, MouseButton, Render, Window};
 
 pub struct Dashboard {
     summaries: Vec<SessionSummary>,

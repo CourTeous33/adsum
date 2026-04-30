@@ -3,7 +3,7 @@
 //! first Enter.
 
 use adsum_state::AppState;
-use gpui::{Context, Render, Window, div, prelude::*, px};
+use gpui::{div, prelude::*, px, Context, Render, Window};
 use std::sync::{Arc, Mutex};
 
 pub struct Conversation {

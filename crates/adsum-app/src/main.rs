@@ -3,8 +3,8 @@ use adsum_conversation::Conversation;
 use adsum_dashboard::Dashboard;
 use adsum_state::{AppState, SummonAction};
 use gpui::{
-    App, Bounds, Pixels, TitlebarOptions, WindowBackgroundAppearance, WindowBounds, WindowKind,
-    WindowOptions, point, prelude::*, px, size,
+    point, prelude::*, px, size, App, Bounds, Pixels, TitlebarOptions, WindowBackgroundAppearance,
+    WindowBounds, WindowKind, WindowOptions,
 };
 use gpui_platform::application;
 use std::sync::{Arc, Mutex};
@@ -29,8 +29,7 @@ fn open_chatbox(
         Some(display) => {
             let display_bounds = display.bounds();
             let origin = point(
-                display_bounds.origin.x
-                    + (display_bounds.size.width - chatbox_size.width) / 2.0,
+                display_bounds.origin.x + (display_bounds.size.width - chatbox_size.width) / 2.0,
                 display_bounds.origin.y + display_bounds.size.height
                     - chatbox_size.height
                     - px(100.0),
@@ -64,8 +63,7 @@ fn open_dashboard(cx: &mut App) -> gpui::WindowHandle<Dashboard> {
         Some(display) => {
             let display_bounds = display.bounds();
             let origin = point(
-                display_bounds.origin.x
-                    + (display_bounds.size.width - dashboard_size.width) / 2.0,
+                display_bounds.origin.x + (display_bounds.size.width - dashboard_size.width) / 2.0,
                 display_bounds.origin.y
                     + (display_bounds.size.height - dashboard_size.height) / 2.0,
             );
@@ -143,7 +141,8 @@ fn run_example() {
             // cascade-close conversation.
             let is_chatbox = {
                 let slot = chatbox_slot_close.lock().unwrap();
-                slot.as_ref().is_some_and(|h| h.window_id() == closed_window_id)
+                slot.as_ref()
+                    .is_some_and(|h| h.window_id() == closed_window_id)
             }; // slot guard dropped here.
             if is_chatbox {
                 let session = state_for_close.lock().unwrap().take_session();
@@ -173,7 +172,8 @@ fn run_example() {
             // Was it the conversation? Just clear its slot — chatbox stays.
             let is_conversation = {
                 let slot = conversation_slot_close.lock().unwrap();
-                slot.as_ref().is_some_and(|h| h.window_id() == closed_window_id)
+                slot.as_ref()
+                    .is_some_and(|h| h.window_id() == closed_window_id)
             };
             if is_conversation {
                 *conversation_slot_close.lock().unwrap() = None;
@@ -183,7 +183,8 @@ fn run_example() {
             // Was it the dashboard? Clear its slot and mark hidden in state.
             let is_dashboard = {
                 let slot = dashboard_slot_close.lock().unwrap();
-                slot.as_ref().is_some_and(|h| h.window_id() == closed_window_id)
+                slot.as_ref()
+                    .is_some_and(|h| h.window_id() == closed_window_id)
             };
             if is_dashboard {
                 *dashboard_slot_close.lock().unwrap() = None;
@@ -238,7 +239,7 @@ fn run_example() {
                         // cleans up state, slot, AND closes the conversation.
                         // Cloning still releases the slot lock at the `;` so
                         // we don't deadlock when on_window_closed re-locks.
-                        let handle_opt = slot.lock().unwrap().clone();
+                        let handle_opt = *slot.lock().unwrap();
                         if let Some(handle) = handle_opt {
                             let _ = handle.update(cx, |_view, window, _cx| {
                                 window.remove_window();
@@ -258,7 +259,10 @@ fn run_example() {
         let dashboard_slot_for_loop = dashboard_slot.clone();
         cx.spawn(async move |async_cx| {
             while let Ok(()) = dashboard_summon_rx.recv().await {
-                let action = state_for_dashboard.lock().unwrap().handle_dashboard_summon();
+                let action = state_for_dashboard
+                    .lock()
+                    .unwrap()
+                    .handle_dashboard_summon();
                 let state = state_for_dashboard.clone();
                 let slot = dashboard_slot_for_loop.clone();
                 async_cx.update(move |cx: &mut App| match action {
@@ -277,7 +281,7 @@ fn run_example() {
                         // Clone (not take) for the same reason as the chatbox
                         // path: on_window_closed needs the slot populated to
                         // identify the closed window as the dashboard.
-                        let handle_opt = slot.lock().unwrap().clone();
+                        let handle_opt = *slot.lock().unwrap();
                         if let Some(handle) = handle_opt {
                             let _ = handle.update(cx, |_view, window, _cx| {
                                 window.remove_window();

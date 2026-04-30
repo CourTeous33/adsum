@@ -20,11 +20,7 @@ impl Supervisor {
     ///
     /// `make_backend` is called each time we (re)start the worker — it returns
     /// a fresh backend instance (the prior one may have died).
-    pub fn run<F, G>(
-        key_specs: &[&str],
-        mut make_backend: F,
-        mut on_fire: G,
-    ) -> Outcome
+    pub fn run<F, G>(key_specs: &[&str], mut make_backend: F, mut on_fire: G) -> Outcome
     where
         F: FnMut() -> Box<dyn Backend>,
         G: FnMut(usize),

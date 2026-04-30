@@ -19,8 +19,7 @@ pub struct SessionSummary {
 }
 
 pub fn conversations_dir() -> io::Result<PathBuf> {
-    let base = dirs::data_dir()
-        .ok_or_else(|| io::Error::other("could not resolve data_dir"))?;
+    let base = dirs::data_dir().ok_or_else(|| io::Error::other("could not resolve data_dir"))?;
     let dir = base.join("Adsum").join("conversations");
     std::fs::create_dir_all(&dir)?;
     Ok(dir)

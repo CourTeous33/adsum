@@ -29,8 +29,7 @@ impl Default for RealBackend {
 
 impl Backend for RealBackend {
     fn register_all(&mut self, key_specs: &[&str]) -> Result<()> {
-        let manager = GlobalHotKeyManager::new()
-            .context("failed to create GlobalHotKeyManager")?;
+        let manager = GlobalHotKeyManager::new().context("failed to create GlobalHotKeyManager")?;
         for spec in key_specs {
             let hotkey = parse_key_spec(spec)?;
             self.hotkey_ids.push(hotkey.id());
@@ -49,7 +48,9 @@ impl Backend for RealBackend {
         // Released as a fire would double-trigger the summon-toggle.
         let rx = GlobalHotKeyEvent::receiver();
         loop {
-            let event = rx.recv().map_err(|e| anyhow!("hotkey channel closed: {e}"))?;
+            let event = rx
+                .recv()
+                .map_err(|e| anyhow!("hotkey channel closed: {e}"))?;
             if event.state != HotKeyState::Pressed {
                 continue;
             }
@@ -109,15 +110,32 @@ fn letter_to_code(token: &str) -> Option<Code> {
         return None;
     }
     match token {
-        "a" => Some(Code::KeyA), "b" => Some(Code::KeyB), "c" => Some(Code::KeyC),
-        "d" => Some(Code::KeyD), "e" => Some(Code::KeyE), "f" => Some(Code::KeyF),
-        "g" => Some(Code::KeyG), "h" => Some(Code::KeyH), "i" => Some(Code::KeyI),
-        "j" => Some(Code::KeyJ), "k" => Some(Code::KeyK), "l" => Some(Code::KeyL),
-        "m" => Some(Code::KeyM), "n" => Some(Code::KeyN), "o" => Some(Code::KeyO),
-        "p" => Some(Code::KeyP), "q" => Some(Code::KeyQ), "r" => Some(Code::KeyR),
-        "s" => Some(Code::KeyS), "t" => Some(Code::KeyT), "u" => Some(Code::KeyU),
-        "v" => Some(Code::KeyV), "w" => Some(Code::KeyW), "x" => Some(Code::KeyX),
-        "y" => Some(Code::KeyY), "z" => Some(Code::KeyZ),
+        "a" => Some(Code::KeyA),
+        "b" => Some(Code::KeyB),
+        "c" => Some(Code::KeyC),
+        "d" => Some(Code::KeyD),
+        "e" => Some(Code::KeyE),
+        "f" => Some(Code::KeyF),
+        "g" => Some(Code::KeyG),
+        "h" => Some(Code::KeyH),
+        "i" => Some(Code::KeyI),
+        "j" => Some(Code::KeyJ),
+        "k" => Some(Code::KeyK),
+        "l" => Some(Code::KeyL),
+        "m" => Some(Code::KeyM),
+        "n" => Some(Code::KeyN),
+        "o" => Some(Code::KeyO),
+        "p" => Some(Code::KeyP),
+        "q" => Some(Code::KeyQ),
+        "r" => Some(Code::KeyR),
+        "s" => Some(Code::KeyS),
+        "t" => Some(Code::KeyT),
+        "u" => Some(Code::KeyU),
+        "v" => Some(Code::KeyV),
+        "w" => Some(Code::KeyW),
+        "x" => Some(Code::KeyX),
+        "y" => Some(Code::KeyY),
+        "z" => Some(Code::KeyZ),
         _ => None,
     }
 }

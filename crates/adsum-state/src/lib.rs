@@ -56,11 +56,19 @@ impl AppState {
     }
 
     pub fn handle_chatbox_summon(&self) -> SummonAction {
-        if self.chatbox_visible { SummonAction::Dismiss } else { SummonAction::Open }
+        if self.chatbox_visible {
+            SummonAction::Dismiss
+        } else {
+            SummonAction::Open
+        }
     }
 
     pub fn handle_dashboard_summon(&self) -> SummonAction {
-        if self.dashboard_visible { SummonAction::Dismiss } else { SummonAction::Open }
+        if self.dashboard_visible {
+            SummonAction::Dismiss
+        } else {
+            SummonAction::Open
+        }
     }
 
     pub fn current_session(&self) -> Option<&Session> {
