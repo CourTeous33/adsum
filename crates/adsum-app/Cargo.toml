@@ -10,3 +10,5 @@ adsum-state = { path = "../adsum-state" }
 adsum-hotkey = { path = "../adsum-hotkey" }
 gpui = { workspace = true }
 gpui-platform = { workspace = true }
+async-channel = { workspace = true }
+env_logger = { workspace = true }

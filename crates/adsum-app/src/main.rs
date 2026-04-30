@@ -87,8 +87,31 @@ impl Render for Chatbox {
 }
 
 fn run_example() {
-    application().run(|cx: &mut App| {
+    env_logger::init();
+
+    let (summon_tx, summon_rx) = async_channel::unbounded::<()>();
+
+    std::thread::spawn(move || {
+        let outcome = adsum_hotkey::supervisor::Supervisor::run(
+            "cmd+shift+space",
+            || Box::new(adsum_hotkey::RealBackend::new()),
+            || {
+                let _ = summon_tx.send_blocking(());
+            },
+        );
+        eprintln!("hotkey supervisor exited: {outcome:?}");
+    });
+
+    application().run(move |cx: &mut App| {
         cx.activate(true);
+
+        let summon_rx = summon_rx.clone();
+        cx.spawn(async move |_async_cx| {
+            while let Ok(()) = summon_rx.recv().await {
+                eprintln!("[hotkey] summon fired");
+            }
+        })
+        .detach();
     });
 }
 
