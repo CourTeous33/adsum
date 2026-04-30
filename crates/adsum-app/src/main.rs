@@ -1,8 +1,8 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
 use gpui::{
-    App, Bounds, Context, Pixels, Window, WindowBounds, WindowOptions, div, point, prelude::*, px,
-    rgb, size,
+    App, Bounds, Context, Pixels, Window, WindowBounds, WindowKind, WindowOptions, div, point,
+    prelude::*, px, rgb, size,
 };
 use gpui_platform::application;
 
@@ -47,6 +47,7 @@ fn run_example() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: None,
                 is_resizable: false,
+                kind: WindowKind::PopUp,
                 ..Default::default()
             },
             |_, cx| {
