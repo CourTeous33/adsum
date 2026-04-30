@@ -8,3 +8,5 @@ publish.workspace = true
 [dependencies]
 adsum-state = { path = "../adsum-state" }
 adsum-hotkey = { path = "../adsum-hotkey" }
+gpui = { workspace = true }
+gpui-platform = { workspace = true }
