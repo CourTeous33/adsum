@@ -1,7 +1,8 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
 use gpui::{
-    App, Bounds, Context, Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
+    App, Bounds, Context, Pixels, Window, WindowBounds, WindowOptions, div, point, prelude::*, px,
+    rgb, size,
 };
 use gpui_platform::application;
 
@@ -28,7 +29,19 @@ impl Render for Chatbox {
 
 fn run_example() {
     application().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(600.), px(80.0)), cx);
+        let chatbox_size = size(px(600.0), px(80.0));
+        let bounds = match cx.primary_display() {
+            Some(display) => {
+                let display_bounds = display.bounds();
+                let origin = point(
+                    display_bounds.origin.x
+                        + (display_bounds.size.width - chatbox_size.width) / 2.0,
+                    display_bounds.origin.y + display_bounds.size.height / 4.0,
+                );
+                Bounds::new(origin, chatbox_size)
+            }
+            None => Bounds::new(point(Pixels::ZERO, Pixels::ZERO), chatbox_size),
+        };
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
