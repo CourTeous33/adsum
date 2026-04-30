@@ -87,3 +87,5 @@ impl AppState {
         self.current_session.take()
     }
 }
+
+pub mod persistence;
