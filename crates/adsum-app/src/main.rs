@@ -18,9 +18,14 @@ impl Focusable for Chatbox {
 }
 
 impl Chatbox {
-    fn handle_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn handle_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let key = &event.keystroke.key;
         let modifiers = event.keystroke.modifiers;
+
+        if key == "escape" {
+            window.remove_window();
+            return;
+        }
 
         if modifiers.platform || modifiers.control || modifiers.alt {
             return;
