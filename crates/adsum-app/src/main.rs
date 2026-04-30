@@ -1,10 +1,12 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
+use adsum_state::{AppState, SummonAction};
 use gpui::{
     App, Bounds, Context, FocusHandle, Focusable, KeyDownEvent, Pixels, Window, WindowBounds,
     WindowKind, WindowOptions, div, point, prelude::*, px, rgb, size,
 };
 use gpui_platform::application;
+use std::sync::{Arc, Mutex};
 
 struct Chatbox {
     current_text: String,
@@ -142,11 +144,48 @@ fn run_example() {
     application().run(move |cx: &mut App| {
         cx.activate(true);
 
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let window_slot: Arc<Mutex<Option<gpui::WindowHandle<Chatbox>>>> =
+            Arc::new(Mutex::new(None));
+
+        // Register a single global on_window_closed handler. When the chatbox
+        // closes by ANY means (Esc, blur, system close), clear the slot and
+        // mark it not visible in AppState.
+        let state_for_close = state.clone();
+        let slot_for_close = window_slot.clone();
+        cx.on_window_closed(move |_cx, closed_window_id| {
+            let mut slot = slot_for_close.lock().unwrap();
+            if let Some(handle) = slot.as_ref() {
+                if handle.window_id() == closed_window_id {
+                    *slot = None;
+                    state_for_close.lock().unwrap().set_chatbox_visible(false);
+                }
+            }
+        })
+        .detach();
+
         let summon_rx = summon_rx.clone();
+        let state_for_loop = state.clone();
+        let slot_for_loop = window_slot.clone();
         cx.spawn(async move |async_cx| {
             while let Ok(()) = summon_rx.recv().await {
-                let _ = async_cx.update(|cx: &mut App| {
-                    let _handle = open_chatbox(cx);
+                let action = state_for_loop.lock().unwrap().handle_summon();
+                let state = state_for_loop.clone();
+                let slot = slot_for_loop.clone();
+                let _ = async_cx.update(move |cx: &mut App| match action {
+                    SummonAction::Open => {
+                        let handle = open_chatbox(cx);
+                        *slot.lock().unwrap() = Some(handle);
+                        state.lock().unwrap().set_chatbox_visible(true);
+                    }
+                    SummonAction::Dismiss => {
+                        if let Some(handle) = slot.lock().unwrap().take() {
+                            let _ = handle.update(cx, |_view, window, _cx| {
+                                window.remove_window();
+                            });
+                        }
+                        state.lock().unwrap().set_chatbox_visible(false);
+                    }
                 });
             }
         })
