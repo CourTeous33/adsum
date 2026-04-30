@@ -17,7 +17,7 @@ fn show_hotkey_failure_notification() {
 }
 
 fn open_chatbox(state: Arc<Mutex<AppState>>, cx: &mut App) -> gpui::WindowHandle<Chatbox> {
-    let chatbox_size = size(px(720.0), px(80.0));
+    let chatbox_size = size(px(720.0), px(560.0));
     let bounds = match cx.primary_display() {
         Some(display) => {
             let display_bounds = display.bounds();
