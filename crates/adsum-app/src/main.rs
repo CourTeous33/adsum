@@ -6,11 +6,11 @@ use gpui::{
 };
 use gpui_platform::application;
 
-struct HelloWorld {
+struct Chatbox {
     text: SharedString,
 }
 
-impl Render for HelloWorld {
+impl Render for Chatbox {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
@@ -98,7 +98,7 @@ fn run_example() {
                 ..Default::default()
             },
             |_, cx| {
-                cx.new(|_| HelloWorld {
+                cx.new(|_| Chatbox {
                     text: "World".into(),
                 })
             },
