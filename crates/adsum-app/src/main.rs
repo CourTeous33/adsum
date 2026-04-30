@@ -1,18 +1,52 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
 use gpui::{
-    App, Bounds, Context, Pixels, Window, WindowBounds, WindowKind, WindowOptions, div, point,
-    prelude::*, px, rgb, size,
+    App, Bounds, Context, FocusHandle, Focusable, KeyDownEvent, Pixels, Window, WindowBounds,
+    WindowKind, WindowOptions, div, point, prelude::*, px, rgb, size,
 };
 use gpui_platform::application;
 
 struct Chatbox {
     current_text: String,
+    focus_handle: FocusHandle,
+}
+
+impl Focusable for Chatbox {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Chatbox {
+    fn handle_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let key = &event.keystroke.key;
+        let modifiers = event.keystroke.modifiers;
+
+        if modifiers.platform || modifiers.control || modifiers.alt {
+            return;
+        }
+        if matches!(key.as_str(), "up" | "down" | "left" | "right") {
+            return;
+        }
+
+        if key.chars().count() == 1 {
+            if let Some(ch) = key.chars().next() {
+                if !ch.is_control() {
+                    self.current_text.push(ch);
+                    cx.notify();
+                }
+            }
+        }
+    }
 }
 
 impl Render for Chatbox {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(|this, event, window, cx| {
+                this.handle_key_down(event, window, cx);
+            }))
             .flex()
             .flex_col()
             .gap_3()
@@ -52,8 +86,15 @@ fn run_example() {
                 kind: WindowKind::PopUp,
                 ..Default::default()
             },
-            |_, cx| {
-                cx.new(|_| Chatbox { current_text: String::new() })
+            |window, cx| {
+                cx.new(|cx| {
+                    let focus_handle = cx.focus_handle();
+                    window.focus(&focus_handle, cx);
+                    Chatbox {
+                        current_text: String::new(),
+                        focus_handle,
+                    }
+                })
             },
         )
         .unwrap();
