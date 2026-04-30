@@ -17,14 +17,16 @@ fn show_hotkey_failure_notification() {
 }
 
 fn open_chatbox(cx: &mut App) -> gpui::WindowHandle<Chatbox> {
-    let chatbox_size = size(px(600.0), px(80.0));
+    let chatbox_size = size(px(720.0), px(80.0));
     let bounds = match cx.primary_display() {
         Some(display) => {
             let display_bounds = display.bounds();
             let origin = point(
                 display_bounds.origin.x
                     + (display_bounds.size.width - chatbox_size.width) / 2.0,
-                display_bounds.origin.y + display_bounds.size.height / 4.0,
+                display_bounds.origin.y + display_bounds.size.height
+                    - chatbox_size.height
+                    - px(100.0),
             );
             Bounds::new(origin, chatbox_size)
         }
