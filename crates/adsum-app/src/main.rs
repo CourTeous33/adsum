@@ -2,8 +2,8 @@
 
 use adsum_state::{AppState, SummonAction};
 use gpui::{
-    App, Bounds, Context, FocusHandle, Focusable, KeyDownEvent, Pixels, Window, WindowBounds,
-    WindowKind, WindowOptions, div, point, prelude::*, px, rgb, size,
+    App, Bounds, Context, FocusHandle, Focusable, KeyDownEvent, Pixels, Subscription, Window,
+    WindowBounds, WindowKind, WindowOptions, div, point, prelude::*, px, rgb, size,
 };
 use gpui_platform::application;
 use std::sync::{Arc, Mutex};
@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 struct Chatbox {
     current_text: String,
     focus_handle: FocusHandle,
+    _activation_subscription: Subscription,
 }
 
 impl Focusable for Chatbox {
@@ -115,9 +116,16 @@ fn open_chatbox(cx: &mut App) -> gpui::WindowHandle<Chatbox> {
             cx.new(|cx| {
                 let focus_handle = cx.focus_handle();
                 window.focus(&focus_handle, cx);
+                let activation_subscription =
+                    cx.observe_window_activation(window, |_this, window, _cx| {
+                        if !window.is_window_active() {
+                            window.remove_window();
+                        }
+                    });
                 Chatbox {
                     current_text: String::new(),
                     focus_handle,
+                    _activation_subscription: activation_subscription,
                 }
             })
         },
