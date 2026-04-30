@@ -86,6 +86,43 @@ impl Render for Chatbox {
     }
 }
 
+fn open_chatbox(cx: &mut App) -> gpui::WindowHandle<Chatbox> {
+    let chatbox_size = size(px(600.0), px(80.0));
+    let bounds = match cx.primary_display() {
+        Some(display) => {
+            let display_bounds = display.bounds();
+            let origin = point(
+                display_bounds.origin.x
+                    + (display_bounds.size.width - chatbox_size.width) / 2.0,
+                display_bounds.origin.y + display_bounds.size.height / 4.0,
+            );
+            Bounds::new(origin, chatbox_size)
+        }
+        None => Bounds::new(point(Pixels::ZERO, Pixels::ZERO), chatbox_size),
+    };
+
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: None,
+            is_resizable: false,
+            kind: WindowKind::PopUp,
+            ..Default::default()
+        },
+        |window, cx| {
+            cx.new(|cx| {
+                let focus_handle = cx.focus_handle();
+                window.focus(&focus_handle, cx);
+                Chatbox {
+                    current_text: String::new(),
+                    focus_handle,
+                }
+            })
+        },
+    )
+    .unwrap()
+}
+
 fn run_example() {
     env_logger::init();
 
@@ -106,9 +143,11 @@ fn run_example() {
         cx.activate(true);
 
         let summon_rx = summon_rx.clone();
-        cx.spawn(async move |_async_cx| {
+        cx.spawn(async move |async_cx| {
             while let Ok(()) = summon_rx.recv().await {
-                eprintln!("[hotkey] summon fired");
+                let _ = async_cx.update(|cx: &mut App| {
+                    let _handle = open_chatbox(cx);
+                });
             }
         })
         .detach();
