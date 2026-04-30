@@ -116,32 +116,42 @@ impl Render for Chatbox {
             (self.current_text.clone(), adsum_tokens::text_primary())
         };
 
-        let input_row = div()
+        // The input panel (a self-contained styled bar). Used by both states.
+        let input_panel = div()
             .flex()
             .flex_row()
             .items_center()
             .gap_3()
             .px_5()
-            .py_3()
+            .h(px(80.0))
+            .bg(adsum_tokens::bg_primary())
+            .rounded(px(adsum_tokens::RADIUS_CHATBOX))
+            .border_1()
+            .border_color(adsum_tokens::border())
+            .shadow_lg()
             .text_size(px(adsum_tokens::TEXT_INPUT))
             .child(div().text_color(adsum_tokens::accent()).child("▸"))
-            .child(div().text_color(display_text.1).child(display_text.0));
+            .child(div().text_color(display_text.1).child(display_text.0.clone()));
 
-        let mut root = div()
+        // Outer root: holds focus + key handler + size_full. No bg/border so the
+        // transparent window background shows through in compact state.
+        let root = div()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|this, event, window, cx| {
                 this.handle_key_down(event, window, cx);
             }))
-            .flex()
-            .flex_col()
-            .bg(adsum_tokens::bg_primary())
-            .rounded(px(adsum_tokens::RADIUS_CHATBOX))
             .size_full()
-            .border_1()
-            .border_color(adsum_tokens::border())
-            .shadow_lg();
+            .flex()
+            .flex_col();
 
-        if !turns.is_empty() {
+        if turns.is_empty() {
+            // COMPACT: transparent space above, input panel anchored at bottom.
+            root.justify_end().child(input_panel)
+        } else {
+            // EXPANDED: full opaque panel filling the window. Transcript above
+            // the input row, divider between.
+            // Transcript region needs an `id` to use overflow_y_scroll (which
+            // requires Stateful<Div>).
             let mut transcript = div()
                 .id("transcript")
                 .flex()
@@ -190,16 +200,33 @@ impl Render for Chatbox {
                     );
             }
 
-            root = root.child(transcript).child(
-                div()
-                    .border_t_1()
-                    .border_color(adsum_tokens::border())
-                    .child(input_row),
-            );
-        } else {
-            root = root.child(input_row);
-        }
+            // The input row inside the expanded panel — same layout as the
+            // standalone input_panel but without its own bg/border (it's
+            // inside the panel already).
+            let input_row = div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .px_5()
+                .py_3()
+                .text_size(px(adsum_tokens::TEXT_INPUT))
+                .child(div().text_color(adsum_tokens::accent()).child("▸"))
+                .child(div().text_color(display_text.1).child(display_text.0));
 
-        root
+            root
+                .bg(adsum_tokens::bg_primary())
+                .rounded(px(adsum_tokens::RADIUS_CHATBOX))
+                .border_1()
+                .border_color(adsum_tokens::border())
+                .shadow_lg()
+                .child(transcript)
+                .child(
+                    div()
+                        .border_t_1()
+                        .border_color(adsum_tokens::border())
+                        .child(input_row),
+                )
+        }
     }
 }
