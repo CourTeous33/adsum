@@ -1,5 +1,3 @@
-#![cfg_attr(target_family = "wasm", no_main)]
-
 use adsum_chatbox::Chatbox;
 use adsum_state::{AppState, SummonAction};
 use gpui::{
@@ -87,10 +85,10 @@ fn run_example() {
         .detach();
 
         let exhausted_rx = exhausted_rx.clone();
-        cx.spawn(async move |async_cx| {
+        cx.spawn(async move |_async_cx| {
             if exhausted_rx.recv().await.is_ok() {
                 show_hotkey_failure_notification();
-                let _ = async_cx.update(|cx: &mut App| cx.quit());
+                std::process::exit(1);
             }
         })
         .detach();
@@ -103,8 +101,17 @@ fn run_example() {
                 let action = state_for_loop.lock().unwrap().handle_summon();
                 let state = state_for_loop.clone();
                 let slot = slot_for_loop.clone();
-                let _ = async_cx.update(move |cx: &mut App| match action {
+                async_cx.update(move |cx: &mut App| match action {
                     SummonAction::Open => {
+                        // Defensive: if a stale handle is in the slot (state
+                        // says hidden but slot has a value), close the old
+                        // window before opening a new one to avoid orphans.
+                        let stale = slot.lock().unwrap().take();
+                        if let Some(stale_handle) = stale {
+                            let _ = stale_handle.update(cx, |_view, window, _cx| {
+                                window.remove_window();
+                            });
+                        }
                         let handle = open_chatbox(cx);
                         *slot.lock().unwrap() = Some(handle);
                         state.lock().unwrap().set_chatbox_visible(true);
@@ -131,14 +138,6 @@ fn run_example() {
     });
 }
 
-#[cfg(not(target_family = "wasm"))]
 fn main() {
-    run_example();
-}
-
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn start() {
-    gpui_platform::web_init();
     run_example();
 }
