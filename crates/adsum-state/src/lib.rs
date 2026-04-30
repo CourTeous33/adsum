@@ -36,6 +36,8 @@ impl Default for Session {
 #[derive(Debug, Default)]
 pub struct AppState {
     chatbox_visible: bool,
+    dashboard_visible: bool,
+    current_session: Option<Session>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -49,11 +51,39 @@ impl AppState {
         self.chatbox_visible = visible;
     }
 
-    pub fn handle_summon(&self) -> SummonAction {
-        if self.chatbox_visible {
-            SummonAction::Dismiss
-        } else {
-            SummonAction::Open
-        }
+    pub fn set_dashboard_visible(&mut self, visible: bool) {
+        self.dashboard_visible = visible;
+    }
+
+    pub fn handle_chatbox_summon(&self) -> SummonAction {
+        if self.chatbox_visible { SummonAction::Dismiss } else { SummonAction::Open }
+    }
+
+    pub fn handle_dashboard_summon(&self) -> SummonAction {
+        if self.dashboard_visible { SummonAction::Dismiss } else { SummonAction::Open }
+    }
+
+    pub fn current_session(&self) -> Option<&Session> {
+        self.current_session.as_ref()
+    }
+
+    pub fn start_session(&mut self) -> &Session {
+        self.current_session = Some(Session::new());
+        self.current_session.as_ref().unwrap()
+    }
+
+    pub fn record_turn(&mut self, user_text: String) -> Option<&Turn> {
+        let session = self.current_session.as_mut()?;
+        let response = format!("echo: {}", user_text);
+        session.turns.push(Turn {
+            user_text,
+            response,
+            timestamp: SystemTime::now(),
+        });
+        session.turns.last()
+    }
+
+    pub fn take_session(&mut self) -> Option<Session> {
+        self.current_session.take()
     }
 }

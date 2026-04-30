@@ -102,7 +102,7 @@ fn run_example() {
         let slot_for_loop = window_slot.clone();
         cx.spawn(async move |async_cx| {
             while let Ok(()) = summon_rx.recv().await {
-                let action = state_for_loop.lock().unwrap().handle_summon();
+                let action = state_for_loop.lock().unwrap().handle_chatbox_summon();
                 let state = state_for_loop.clone();
                 let slot = slot_for_loop.clone();
                 async_cx.update(move |cx: &mut App| match action {
