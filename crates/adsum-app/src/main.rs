@@ -25,6 +25,13 @@ impl Chatbox {
         if modifiers.platform || modifiers.control || modifiers.alt {
             return;
         }
+
+        if key == "backspace" {
+            self.current_text.pop();
+            cx.notify();
+            return;
+        }
+
         if matches!(key.as_str(), "up" | "down" | "left" | "right") {
             return;
         }
