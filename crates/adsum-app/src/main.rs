@@ -14,7 +14,7 @@ impl Render for Chatbox {
             .flex_col()
             .gap_3()
             .bg(rgb(0x505050))
-            .size(px(500.0))
+            .size_full()
             .justify_center()
             .items_center()
             .shadow_lg()
@@ -28,7 +28,7 @@ impl Render for Chatbox {
 
 fn run_example() {
     application().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(600.), px(500.0)), cx);
+        let bounds = Bounds::centered(None, size(px(600.), px(80.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
