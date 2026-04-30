@@ -2,7 +2,7 @@
 
 use adsum_state::persistence::{load_all_sessions, load_session, SessionSummary};
 use adsum_state::Session;
-use gpui::{App, Context, Render, Window, div, prelude::*, px};
+use gpui::{Context, MouseButton, Render, Window, div, prelude::*, px};
 
 pub struct Dashboard {
     summaries: Vec<SessionSummary>,
@@ -35,14 +35,144 @@ impl Dashboard {
 }
 
 impl Render for Dashboard {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Sidebar
+        let sidebar = if self.summaries.is_empty() {
+            div()
+                .w(px(320.0))
+                .h_full()
+                .bg(adsum_tokens::bg_primary())
+                .border_r_1()
+                .border_color(adsum_tokens::border())
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .text_color(adsum_tokens::text_dim())
+                        .child("No conversations yet"),
+                )
+                .into_any_element()
+        } else {
+            let mut sidebar = div()
+                .id("dashboard-sidebar")
+                .flex()
+                .flex_col()
+                .w(px(320.0))
+                .h_full()
+                .bg(adsum_tokens::bg_primary())
+                .border_r_1()
+                .border_color(adsum_tokens::border())
+                .overflow_y_scroll()
+                .child(
+                    div()
+                        .px_4()
+                        .py_4()
+                        .text_size(px(adsum_tokens::TEXT_HEADING))
+                        .text_color(adsum_tokens::text_primary())
+                        .child("Conversations"),
+                );
+
+            for (idx, summary) in self.summaries.iter().enumerate() {
+                let id = summary.id.clone();
+                let preview = if summary.first_user_text.is_empty() {
+                    "(empty)".to_string()
+                } else if summary.first_user_text.len() > 40 {
+                    let truncated: String = summary.first_user_text.chars().take(40).collect();
+                    format!("{}…", truncated)
+                } else {
+                    summary.first_user_text.clone()
+                };
+                let turn_count = summary.turn_count;
+                let timestamp = format_relative_time(summary.created_at);
+
+                sidebar = sidebar.child(
+                    div()
+                        .id(("session-row", idx))
+                        .flex()
+                        .flex_col()
+                        .px_4()
+                        .py_3()
+                        .border_b_1()
+                        .border_color(adsum_tokens::border())
+                        .hover(|s| s.bg(adsum_tokens::bg_hover()))
+                        .cursor_pointer()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _event, _window, cx| {
+                                this.select(&id, cx);
+                            }),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(adsum_tokens::TEXT_META))
+                                .text_color(adsum_tokens::text_muted())
+                                .child(timestamp),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(adsum_tokens::TEXT_BODY))
+                                .text_color(adsum_tokens::text_primary())
+                                .child(preview),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(adsum_tokens::TEXT_META))
+                                .text_color(adsum_tokens::text_dim())
+                                .child(format!("{turn_count} turns")),
+                        ),
+                );
+            }
+            sidebar.into_any_element()
+        };
+
+        // Detail pane: placeholder until Task 14
+        let detail_pane = match &self.selected {
+            Some(_session) => div()
+                .flex_1()
+                .child("detail (todo, Task 14)")
+                .into_any_element(),
+            None => div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .text_color(adsum_tokens::text_dim())
+                        .child("Select a conversation"),
+                )
+                .into_any_element(),
+        };
+
         div()
             .flex()
             .flex_row()
             .size_full()
             .bg(adsum_tokens::bg_primary())
-            // Sidebar and detail panes wired in Tasks 13/14.
-            .child(div().w(px(320.0)).child("sidebar (todo)"))
-            .child(div().flex_1().child("detail (todo)"))
+            .child(sidebar)
+            .child(detail_pane)
+    }
+}
+
+fn format_relative_time(t: std::time::SystemTime) -> String {
+    use std::time::SystemTime;
+    let now = SystemTime::now();
+    match now.duration_since(t) {
+        Ok(d) => {
+            let secs = d.as_secs();
+            if secs < 60 {
+                "just now".to_string()
+            } else if secs < 3600 {
+                format!("{}m ago", secs / 60)
+            } else if secs < 86_400 {
+                format!("{}h ago", secs / 3600)
+            } else if secs < 7 * 86_400 {
+                format!("{}d ago", secs / 86_400)
+            } else {
+                "a while ago".to_string()
+            }
+        }
+        Err(_) => "in the future".to_string(),
     }
 }
