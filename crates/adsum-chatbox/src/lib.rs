@@ -177,6 +177,10 @@ fn open_conversation_window(
             is_resizable: false,
             kind: WindowKind::PopUp,
             window_background: WindowBackgroundAppearance::Transparent,
+            // The chatbox keeps focus throughout. The conversation window is a
+            // passive display — taking focus here would deactivate the chatbox,
+            // tripping its blur observer and dismissing both windows.
+            focus: false,
             ..Default::default()
         },
         |window, cx| {

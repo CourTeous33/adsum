@@ -172,22 +172,21 @@ fn run_example() {
                         state.lock().unwrap().set_chatbox_visible(true);
                     }
                     SummonAction::Dismiss => {
-                        // Take the handle in a standalone statement so the
-                        // MutexGuard from `slot.lock()` is dropped at the `;`,
-                        // before handle.update runs. remove_window() fires
-                        // on_window_closed synchronously inside handle.update,
-                        // and that callback re-locks `slot` — holding the
-                        // guard across the call deadlocks std::sync::Mutex.
-                        // The chatbox's on_window_closed handler also closes
-                        // the conversation window, so we don't need to do it
-                        // here.
-                        let handle_opt = slot.lock().unwrap().take();
+                        // Clone (not take) the handle so the slot stays
+                        // populated when on_window_closed fires synchronously
+                        // inside handle.update — that's how the cascade
+                        // identifies the chatbox as the closed window and
+                        // cleans up state, slot, AND closes the conversation.
+                        // Cloning still releases the slot lock at the `;` so
+                        // we don't deadlock when on_window_closed re-locks.
+                        let handle_opt = slot.lock().unwrap().clone();
                         if let Some(handle) = handle_opt {
                             let _ = handle.update(cx, |_view, window, _cx| {
                                 window.remove_window();
                             });
                         }
-                        state.lock().unwrap().set_chatbox_visible(false);
+                        // No state/slot updates here — on_window_closed does
+                        // them when the chatbox window actually closes.
                     }
                 });
             }
