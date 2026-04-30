@@ -46,6 +46,7 @@ fn run_example() {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: None,
+                is_resizable: false,
                 ..Default::default()
             },
             |_, cx| {
