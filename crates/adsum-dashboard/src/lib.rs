@@ -126,12 +126,86 @@ impl Render for Dashboard {
             sidebar.into_any_element()
         };
 
-        // Detail pane: placeholder until Task 14
+        // Detail pane
         let detail_pane = match &self.selected {
-            Some(_session) => div()
-                .flex_1()
-                .child("detail (todo, Task 14)")
-                .into_any_element(),
+            Some(session) => {
+                let header = div()
+                    .flex()
+                    .flex_row()
+                    .gap_3()
+                    .items_baseline()
+                    .pb_3()
+                    .border_b_1()
+                    .border_color(adsum_tokens::border())
+                    .child(
+                        div()
+                            .text_size(px(adsum_tokens::TEXT_META))
+                            .text_color(adsum_tokens::text_muted())
+                            .child(format!("{:?}", session.created_at)),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(adsum_tokens::TEXT_META))
+                            .text_color(adsum_tokens::text_dim())
+                            .child(format!("{} turns", session.turns.len())),
+                    );
+
+                let mut transcript = div()
+                    .id("dashboard-transcript")
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .pt_3()
+                    .text_size(px(adsum_tokens::TEXT_BODY))
+                    .overflow_y_scroll();
+
+                for turn in session.turns.iter() {
+                    transcript = transcript
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .w(px(20.0))
+                                        .text_color(adsum_tokens::accent())
+                                        .child("▸"),
+                                )
+                                .child(
+                                    div()
+                                        .text_color(adsum_tokens::text_primary())
+                                        .child(turn.user_text.clone()),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .w(px(20.0))
+                                        .text_color(adsum_tokens::text_muted())
+                                        .child("◦"),
+                                )
+                                .child(
+                                    div()
+                                        .text_color(adsum_tokens::text_primary())
+                                        .child(turn.response.clone()),
+                                ),
+                        );
+                }
+
+                div()
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .p_5()
+                    .child(header)
+                    .child(transcript)
+                    .into_any_element()
+            }
             None => div()
                 .flex_1()
                 .flex()
