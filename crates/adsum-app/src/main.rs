@@ -8,6 +8,15 @@ use gpui::{
 use gpui_platform::application;
 use std::sync::{Arc, Mutex};
 
+fn show_hotkey_failure_notification() {
+    let _ = std::process::Command::new("osascript")
+        .args([
+            "-e",
+            "display notification \"Adsum couldn't register the global hotkey. Check Accessibility permissions in System Settings.\" with title \"Adsum\"",
+        ])
+        .status();
+}
+
 fn open_chatbox(cx: &mut App) -> gpui::WindowHandle<Chatbox> {
     let chatbox_size = size(px(600.0), px(80.0));
     let bounds = match cx.primary_display() {
@@ -40,6 +49,7 @@ fn run_example() {
     env_logger::init();
 
     let (summon_tx, summon_rx) = async_channel::unbounded::<()>();
+    let (exhausted_tx, exhausted_rx) = async_channel::bounded::<()>(1);
 
     std::thread::spawn(move || {
         let outcome = adsum_hotkey::supervisor::Supervisor::run(
@@ -50,6 +60,7 @@ fn run_example() {
             },
         );
         eprintln!("hotkey supervisor exited: {outcome:?}");
+        let _ = exhausted_tx.send_blocking(());
     });
 
     application().run(move |cx: &mut App| {
@@ -71,6 +82,15 @@ fn run_example() {
                     *slot = None;
                     state_for_close.lock().unwrap().set_chatbox_visible(false);
                 }
+            }
+        })
+        .detach();
+
+        let exhausted_rx = exhausted_rx.clone();
+        cx.spawn(async move |async_cx| {
+            if exhausted_rx.recv().await.is_ok() {
+                show_hotkey_failure_notification();
+                let _ = async_cx.update(|cx: &mut App| cx.quit());
             }
         })
         .detach();
