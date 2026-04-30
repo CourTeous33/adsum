@@ -78,6 +78,12 @@ impl Chatbox {
             return;
         }
 
+        if key == "space" {
+            self.current_text.push(' ');
+            cx.notify();
+            return;
+        }
+
         if key.chars().count() == 1 {
             if let Some(ch) = key.chars().next() {
                 if !ch.is_control() {
