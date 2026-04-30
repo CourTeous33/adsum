@@ -1,0 +1,34 @@
+use adsum_state::{Session, Turn};
+use std::time::SystemTime;
+
+#[test]
+fn session_roundtrips_through_json() {
+    let original = Session {
+        id: "test-id-1".to_string(),
+        created_at: SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000),
+        turns: vec![
+            Turn {
+                user_text: "hello".to_string(),
+                response: "echo: hello".to_string(),
+                timestamp: SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_001),
+            },
+            Turn {
+                user_text: "how are you".to_string(),
+                response: "echo: how are you".to_string(),
+                timestamp: SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_002),
+            },
+        ],
+    };
+
+    let json = serde_json::to_string(&original).expect("serialize");
+    let restored: Session = serde_json::from_str(&json).expect("deserialize");
+
+    assert_eq!(original, restored);
+}
+
+#[test]
+fn session_new_has_uuid_v4_id_and_empty_turns() {
+    let s = Session::new();
+    assert_eq!(s.turns.len(), 0);
+    assert_eq!(s.id.len(), 36);
+}

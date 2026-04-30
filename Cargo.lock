@@ -50,6 +50,12 @@ dependencies = [
 [[package]]
 name = "adsum-state"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "uuid",
+]
 
 [[package]]
 name = "adsum-tokens"
