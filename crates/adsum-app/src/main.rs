@@ -187,7 +187,14 @@ fn run_example() {
                         state.lock().unwrap().set_chatbox_visible(true);
                     }
                     SummonAction::Dismiss => {
-                        if let Some(handle) = slot.lock().unwrap().take() {
+                        // Take the handle in a standalone statement so the
+                        // MutexGuard from `slot.lock()` is dropped at the `;`,
+                        // before handle.update runs. remove_window() fires
+                        // on_window_closed synchronously inside handle.update,
+                        // and that callback re-locks `slot` — holding the
+                        // guard across the call deadlocks std::sync::Mutex.
+                        let handle_opt = slot.lock().unwrap().take();
+                        if let Some(handle) = handle_opt {
                             let _ = handle.update(cx, |_view, window, _cx| {
                                 window.remove_window();
                             });
