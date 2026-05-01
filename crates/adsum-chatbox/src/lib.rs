@@ -1,17 +1,23 @@
 use adsum_conversation::Conversation;
+use adsum_llm::LlmService;
+use adsum_settings::Settings;
 use adsum_state::AppState;
 use gpui::{
     div, point, prelude::*, px, size, App, Bounds, Context, FocusHandle, Focusable, KeyDownEvent,
     Pixels, Render, Subscription, Window, WindowBackgroundAppearance, WindowBounds, WindowKind,
     WindowOptions,
 };
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
+use tokio_util::sync::CancellationToken;
 
 pub struct Chatbox {
     current_text: String,
     focus_handle: FocusHandle,
     _activation_subscription: Subscription,
     state: Arc<Mutex<AppState>>,
+    settings: Arc<RwLock<Settings>>,
+    llm: Arc<LlmService>,
+    in_flight_slot: Arc<Mutex<Option<CancellationToken>>>,
     conversation_slot: Arc<Mutex<Option<gpui::WindowHandle<Conversation>>>>,
 }
 
@@ -22,16 +28,21 @@ impl Focusable for Chatbox {
 }
 
 impl Chatbox {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         state: Arc<Mutex<AppState>>,
+        settings: Arc<RwLock<Settings>>,
+        llm: Arc<LlmService>,
+        in_flight_slot: Arc<Mutex<Option<CancellationToken>>>,
         conversation_slot: Arc<Mutex<Option<gpui::WindowHandle<Conversation>>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
-        let activation_subscription = cx.observe_window_activation(window, |_this, window, _cx| {
+        let activation_subscription = cx.observe_window_activation(window, |this, window, _cx| {
             if !window.is_window_active() {
+                this.cancel_in_flight();
                 window.remove_window();
             }
         });
@@ -40,7 +51,21 @@ impl Chatbox {
             focus_handle,
             _activation_subscription: activation_subscription,
             state,
+            settings,
+            llm,
+            in_flight_slot,
             conversation_slot,
+        }
+    }
+
+    fn cancel_in_flight(&self) {
+        let tok = self.in_flight_slot.lock().unwrap().take();
+        if let Some(tok) = tok {
+            tok.cancel();
+        }
+        let mut st = self.state.lock().unwrap();
+        if st.is_streaming() {
+            st.finalize_turn(adsum_state::TurnKind::Cancelled);
         }
     }
 
@@ -66,31 +91,7 @@ impl Chatbox {
         }
 
         if key == "enter" {
-            if !self.current_text.is_empty() {
-                let user_text = std::mem::take(&mut self.current_text);
-                self.state.lock().unwrap().record_turn(user_text);
-
-                // Ensure the conversation window is open and notify it of the
-                // new turn. Take the handle clone in a standalone statement so
-                // the MutexGuard drops at the `;` before any GPUI calls — we
-                // must NOT hold the slot lock across cx.open_window /
-                // handle.update (those can fire on_window_closed synchronously
-                // and re-enter the slot lock).
-                let conv_handle = *self.conversation_slot.lock().unwrap();
-                match conv_handle {
-                    Some(handle) => {
-                        // Existing window — trigger re-render.
-                        let _ = handle.update(cx, |_view, _window, cx| cx.notify());
-                    }
-                    None => {
-                        // Open a new conversation window.
-                        let new_handle = open_conversation_window(self.state.clone(), cx);
-                        *self.conversation_slot.lock().unwrap() = Some(new_handle);
-                    }
-                }
-
-                cx.notify();
-            }
+            // Replaced in Task 15 with streaming LLM call.
             return;
         }
         if key == "backspace" {
@@ -148,6 +149,7 @@ impl Render for Chatbox {
 }
 
 /// Open a fresh Conversation window positioned directly above the chatbox.
+#[allow(dead_code)]
 fn open_conversation_window(
     state: Arc<Mutex<AppState>>,
     cx: &mut App,
