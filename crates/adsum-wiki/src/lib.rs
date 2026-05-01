@@ -61,9 +61,28 @@ impl WikiStore {
         &self.root
     }
 
-    /// Stubbed — implementation lands in a later task.
+    /// Returns all `.md` files in `pages/` as `PageMeta` records, sorted by
+    /// `modified_at` descending (most-recent first). Lenient — non-conforming
+    /// filenames (uppercase, spaces, etc.) are included; the stored `slug`
+    /// is the filename without the `.md` extension.
     pub fn list_pages(&self) -> Result<Vec<PageMeta>, WikiError> {
-        Ok(Vec::new())
+        let pages_dir = self.root.join("pages");
+        let mut out = Vec::new();
+        for entry in std::fs::read_dir(&pages_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("md") {
+                continue;
+            }
+            let slug = match path.file_stem().and_then(|s| s.to_str()) {
+                Some(s) => s.to_string(),
+                None => continue,
+            };
+            let modified_at = entry.metadata()?.modified()?;
+            out.push(PageMeta { slug, modified_at });
+        }
+        out.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+        Ok(out)
     }
 
     pub fn read_index(&self) -> Result<String, WikiError> {

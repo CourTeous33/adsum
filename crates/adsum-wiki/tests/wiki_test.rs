@@ -126,3 +126,63 @@ fn read_page_returns_page_not_found_for_missing_slug() {
         "expected PageNotFound, got {result:?}"
     );
 }
+
+#[test]
+fn list_pages_on_fresh_wiki_is_empty() {
+    let dir = tempdir().expect("tempdir");
+    let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
+
+    let pages = store.list_pages().expect("list");
+    assert!(pages.is_empty(), "fresh wiki has no pages, got {pages:?}");
+}
+
+#[test]
+fn list_pages_returns_slugs_sorted_modified_descending() {
+    use std::thread::sleep;
+    use std::time::Duration;
+
+    let dir = tempdir().expect("tempdir");
+    let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
+
+    store.write_page("first", "1").expect("write 1");
+    sleep(Duration::from_millis(20));
+    store.write_page("second", "2").expect("write 2");
+    sleep(Duration::from_millis(20));
+    store.write_page("third", "3").expect("write 3");
+
+    let pages = store.list_pages().expect("list");
+    let slugs: Vec<&str> = pages.iter().map(|p| p.slug.as_str()).collect();
+    assert_eq!(slugs, vec!["third", "second", "first"]);
+    // Sanity check: timestamps are monotonically non-increasing in the list.
+    for window in pages.windows(2) {
+        assert!(
+            window[0].modified_at >= window[1].modified_at,
+            "pages not sorted desc: {:?}",
+            pages
+        );
+    }
+}
+
+#[test]
+fn list_pages_includes_non_conforming_filenames() {
+    let dir = tempdir().expect("tempdir");
+    let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
+
+    // Drop a file by hand with a non-conforming name (caps + space).
+    std::fs::write(
+        dir.path().join("pages").join("Some Entity.md"),
+        "hand-edited\n",
+    )
+    .expect("write file");
+    store.write_page("normal", "ok").expect("write normal");
+
+    let slugs: std::collections::HashSet<String> = store
+        .list_pages()
+        .expect("list")
+        .into_iter()
+        .map(|p| p.slug)
+        .collect();
+
+    assert!(slugs.contains("normal"));
+    assert!(slugs.contains("Some Entity"));
+}
