@@ -16,6 +16,7 @@ pub const TEXT_PRIMARY: u32 = 0xededed;
 pub const TEXT_MUTED: u32 = 0x7a7a82;
 pub const TEXT_DIM: u32 = 0x4a4a52;
 pub const ACCENT: u32 = 0xa78bfa;
+pub const ERROR_RED: u32 = 0xff6b6b;
 
 // ---------- Typography (in px) ----------
 
@@ -43,6 +44,16 @@ pub const TURN_GAP: f32 = 12.0;
 pub const SESSION_PADDING: f32 = 16.0;
 pub const MAX_CONVERSATION_HEIGHT: f32 = 480.0;
 
+// ---------- Dashboard nav rail ----------
+
+pub const NAV_RAIL_W: f32 = 48.0;
+pub const NAV_BUTTON_SIZE: f32 = 40.0;
+pub const NAV_GLYPH_SIZE: f32 = 18.0;
+
+// ---------- Settings page ----------
+
+pub const SETTINGS_MAX_W: f32 = 560.0;
+
 // ---------- Helpers ----------
 
 pub fn bg_primary() -> Rgba {
@@ -65,6 +76,9 @@ pub fn text_dim() -> Rgba {
 }
 pub fn accent() -> Rgba {
     rgb(ACCENT)
+}
+pub fn error_red() -> Rgba {
+    rgb(ERROR_RED)
 }
 
 pub fn s(level: u8) -> Pixels {
