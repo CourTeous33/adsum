@@ -34,14 +34,19 @@ impl AssetSource for Assets {
     }
 }
 
-fn show_hotkey_failure_notification(hotkey: &str) {
-    let body = format!(
-        "Adsum couldn't register the global hotkey {hotkey}. Check Accessibility permissions in System Settings.",
-    );
+/// Show a macOS notification with an arbitrary body. Best-effort: silently
+/// drops on osascript failure (the user already has stderr).
+fn show_notification(body: &str) {
     let osa = format!("display notification \"{body}\" with title \"Adsum\"");
     let _ = std::process::Command::new("osascript")
         .args(["-e", &osa])
         .status();
+}
+
+fn show_hotkey_failure_notification(hotkey: &str) {
+    show_notification(&format!(
+        "Adsum couldn't register the global hotkey {hotkey}. Check Accessibility permissions in System Settings."
+    ));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -231,7 +236,9 @@ fn run_example() {
             Some(base) => base.join("Adsum").join("wiki"),
             None => {
                 eprintln!("adsum-app: could not resolve data_dir for wiki");
-                show_hotkey_failure_notification("wiki initialization");
+                show_notification(
+                    "Adsum couldn't locate a data directory for the wiki store. Check that ~/Library/Application Support is accessible.",
+                );
                 std::process::exit(1);
             }
         };
@@ -239,7 +246,9 @@ fn run_example() {
             Ok(w) => Arc::new(Mutex::new(w)),
             Err(err) => {
                 eprintln!("adsum-app: failed to open wiki: {err:#}");
-                show_hotkey_failure_notification("wiki initialization");
+                show_notification(
+                    "Adsum couldn't initialize the wiki store at ~/Library/Application Support/Adsum/wiki/. Check disk permissions.",
+                );
                 std::process::exit(1);
             }
         };

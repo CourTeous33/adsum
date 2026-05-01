@@ -134,7 +134,6 @@ dependencies = [
 name = "adsum-wiki"
 version = "0.1.0"
 dependencies = [
- "dirs 5.0.1",
  "tempfile",
  "thiserror 1.0.69",
 ]
