@@ -52,6 +52,9 @@ impl Dashboard {
     fn set_section(&mut self, section: Section, cx: &mut Context<Self>) {
         if self.active_section != section {
             self.active_section = section;
+            if section == Section::Wikis {
+                self.wikis.refresh();
+            }
             cx.notify();
         }
     }

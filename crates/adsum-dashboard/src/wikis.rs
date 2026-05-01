@@ -4,44 +4,60 @@
 //!
 //! Real markdown rendering is the next spec; v1 is intentionally raw.
 
-use adsum_wiki::{PageMeta, WikiStore};
-use gpui::{div, prelude::*, px, AnyElement, Context};
+use adsum_wiki::{PageMeta, WikiError, WikiStore};
+use gpui::{div, prelude::*, px, AnyElement, Context, MouseButton};
 use std::sync::{Arc, Mutex};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Selection {
+    Index,
+    Log,
+    Page(String),
+}
 
 pub struct WikisView {
     wiki: Arc<Mutex<WikiStore>>,
     pages: Vec<PageMeta>,
+    selection: Selection,
+    content: Result<String, ContentError>,
 }
+
+#[derive(Debug, Clone)]
+struct ContentError(String);
 
 impl WikisView {
     pub fn new(wiki: Arc<Mutex<WikiStore>>) -> Self {
-        let pages = wiki
-            .lock()
-            .unwrap()
-            .list_pages()
-            .unwrap_or_else(|err| {
-                eprintln!("adsum-dashboard: failed to list wiki pages: {err:#}");
-                Vec::new()
-            });
-        Self { wiki, pages }
+        let pages = list_or_log_err(&wiki);
+        let content = read_for(&wiki, &Selection::Index);
+        Self {
+            wiki,
+            pages,
+            selection: Selection::Index,
+            content,
+        }
     }
 
-    /// Re-read the page list from disk. Called on tab activation.
+    /// Re-read the page list and reset selection to Index. Called on every
+    /// tab activation into Wikis. Per spec, v1 doesn't persist selection
+    /// across tab switches.
     pub fn refresh(&mut self) {
-        self.pages = self
-            .wiki
-            .lock()
-            .unwrap()
-            .list_pages()
-            .unwrap_or_else(|err| {
-                eprintln!("adsum-dashboard: failed to list wiki pages: {err:#}");
-                Vec::new()
-            });
+        self.pages = list_or_log_err(&self.wiki);
+        self.selection = Selection::Index;
+        self.content = read_for(&self.wiki, &self.selection);
     }
 
-    pub fn render(&self, _cx: &mut Context<crate::Dashboard>) -> AnyElement {
-        let sidebar = self.render_sidebar();
-        let detail = self.render_detail_placeholder();
+    fn select(&mut self, sel: Selection, cx: &mut Context<crate::Dashboard>) {
+        if self.selection == sel {
+            return;
+        }
+        self.selection = sel.clone();
+        self.content = read_for(&self.wiki, &sel);
+        cx.notify();
+    }
+
+    pub fn render(&self, cx: &mut Context<crate::Dashboard>) -> AnyElement {
+        let sidebar = self.render_sidebar(cx);
+        let detail = self.render_detail();
         div()
             .flex()
             .flex_row()
@@ -52,7 +68,7 @@ impl WikisView {
             .into_any_element()
     }
 
-    fn render_sidebar(&self) -> AnyElement {
+    fn render_sidebar(&self, cx: &mut Context<crate::Dashboard>) -> AnyElement {
         let mut sidebar = div()
             .id("wikis-sidebar")
             .flex()
@@ -73,11 +89,21 @@ impl WikisView {
                     .child("Wiki"),
             );
 
-        // Pinned: index, log.
-        sidebar = sidebar.child(pinned_row("index"));
-        sidebar = sidebar.child(pinned_row("log"));
+        sidebar = sidebar.child(pinned_row(
+            cx,
+            0,
+            "index",
+            Selection::Index,
+            self.selection == Selection::Index,
+        ));
+        sidebar = sidebar.child(pinned_row(
+            cx,
+            1,
+            "log",
+            Selection::Log,
+            self.selection == Selection::Log,
+        ));
 
-        // Separator between pinned rows and the page list.
         sidebar = sidebar.child(
             div()
                 .h(px(1.0))
@@ -86,37 +112,120 @@ impl WikisView {
                 .bg(adsum_tokens::border()),
         );
 
-        // Pages, modified-at-desc.
         for (idx, page) in self.pages.iter().enumerate() {
-            sidebar = sidebar.child(page_row(idx, &page.slug));
+            let is_selected = matches!(&self.selection, Selection::Page(s) if s == &page.slug);
+            sidebar = sidebar.child(page_row(cx, idx, &page.slug, is_selected));
         }
 
         sidebar.into_any_element()
     }
 
-    fn render_detail_placeholder(&self) -> AnyElement {
+    fn render_detail(&self) -> AnyElement {
+        let body: AnyElement = match &self.content {
+            Ok(text) => {
+                let lines: Vec<gpui::AnyElement> = text
+                    .lines()
+                    .map(|line| {
+                        div()
+                            .text_color(adsum_tokens::text_primary())
+                            .child(line.to_string())
+                            .into_any_element()
+                    })
+                    .collect();
+                let mut col = div()
+                    .id("wikis-detail")
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .w_full()
+                    .text_size(px(adsum_tokens::TEXT_BODY))
+                    .font_family("Menlo")
+                    .overflow_y_scroll();
+                for line in lines {
+                    col = col.child(line);
+                }
+                col.into_any_element()
+            }
+            Err(err) => div()
+                .text_color(adsum_tokens::error_red())
+                .child(err.0.clone())
+                .into_any_element(),
+        };
+
         div()
             .flex_1()
             .min_w_0()
             .flex()
-            .items_center()
-            .justify_center()
-            .child(
-                div()
-                    .text_color(adsum_tokens::text_dim())
-                    .child("Select an entry"),
-            )
+            .flex_col()
+            .px_8()
+            .py_5()
+            .child(body)
             .into_any_element()
     }
 }
 
-fn pinned_row(label: &'static str) -> AnyElement {
-    div()
+fn list_or_log_err(wiki: &Arc<Mutex<WikiStore>>) -> Vec<PageMeta> {
+    wiki.lock().unwrap().list_pages().unwrap_or_else(|err| {
+        eprintln!("adsum-dashboard: failed to list wiki pages: {err:#}");
+        Vec::new()
+    })
+}
+
+fn read_for(wiki: &Arc<Mutex<WikiStore>>, sel: &Selection) -> Result<String, ContentError> {
+    let result = match sel {
+        Selection::Index => wiki.lock().unwrap().read_index(),
+        Selection::Log => wiki.lock().unwrap().read_log(),
+        Selection::Page(slug) => wiki.lock().unwrap().read_page(slug),
+    };
+    result.map_err(|err| ContentError(format_wiki_error(&err, sel)))
+}
+
+fn format_wiki_error(err: &WikiError, sel: &Selection) -> String {
+    match err {
+        WikiError::PageNotFound(slug) => format!("Page not found: {slug}"),
+        WikiError::Io(io_err) => format!("Could not read {}: {io_err}", label_for(sel)),
+        WikiError::InvalidSlug(slug) => format!("Invalid slug: {slug}"),
+    }
+}
+
+fn label_for(sel: &Selection) -> String {
+    match sel {
+        Selection::Index => "index".into(),
+        Selection::Log => "log".into(),
+        Selection::Page(slug) => format!("page {slug}"),
+    }
+}
+
+fn pinned_row(
+    cx: &mut Context<crate::Dashboard>,
+    idx: usize,
+    label: &'static str,
+    target: Selection,
+    is_selected: bool,
+) -> AnyElement {
+    let stripe_color = if is_selected {
+        adsum_tokens::accent()
+    } else {
+        adsum_tokens::bg_primary()
+    };
+    let mut row = div()
+        .id(("wikis-pinned", idx))
         .flex()
         .flex_row()
         .border_b_1()
         .border_color(adsum_tokens::border())
-        .child(div().w(px(3.0)).h_full().bg(adsum_tokens::bg_primary()))
+        .hover(|s| s.bg(adsum_tokens::bg_hover()))
+        .cursor_pointer()
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _event, _window, cx| {
+                this.wikis.select(target.clone(), cx);
+            }),
+        );
+    if is_selected {
+        row = row.bg(adsum_tokens::bg_hover());
+    }
+    row.child(div().w(px(3.0)).h_full().bg(stripe_color))
         .child(
             div()
                 .flex_1()
@@ -129,14 +238,37 @@ fn pinned_row(label: &'static str) -> AnyElement {
         .into_any_element()
 }
 
-fn page_row(idx: usize, slug: &str) -> AnyElement {
-    let _ = idx; // selection wiring lands in Task 9
-    div()
+fn page_row(
+    cx: &mut Context<crate::Dashboard>,
+    idx: usize,
+    slug: &str,
+    is_selected: bool,
+) -> AnyElement {
+    let slug = slug.to_string();
+    let target = Selection::Page(slug.clone());
+    let stripe_color = if is_selected {
+        adsum_tokens::accent()
+    } else {
+        adsum_tokens::bg_primary()
+    };
+    let mut row = div()
+        .id(("wikis-page", idx))
         .flex()
         .flex_row()
         .border_b_1()
         .border_color(adsum_tokens::border())
-        .child(div().w(px(3.0)).h_full().bg(adsum_tokens::bg_primary()))
+        .hover(|s| s.bg(adsum_tokens::bg_hover()))
+        .cursor_pointer()
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _event, _window, cx| {
+                this.wikis.select(target.clone(), cx);
+            }),
+        );
+    if is_selected {
+        row = row.bg(adsum_tokens::bg_hover());
+    }
+    row.child(div().w(px(3.0)).h_full().bg(stripe_color))
         .child(
             div()
                 .flex_1()
@@ -144,7 +276,7 @@ fn page_row(idx: usize, slug: &str) -> AnyElement {
                 .py_3()
                 .text_size(px(adsum_tokens::TEXT_BODY))
                 .text_color(adsum_tokens::text_primary())
-                .child(slug.to_string()),
+                .child(slug),
         )
         .into_any_element()
 }
