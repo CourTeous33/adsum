@@ -85,13 +85,30 @@ impl KeyStore for FileKeyStore {
         }
         let json = serde_json::to_string_pretty(settings)
             .map_err(|e| io::Error::other(format!("serialize settings: {e}")))?;
-        std::fs::write(&self.path, json)?;
+
         #[cfg(unix)]
         {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&self.path)?;
+            file.write_all(json.as_bytes())?;
+            // Belt-and-suspenders: if the file already existed with looser
+            // perms, the open() above keeps the existing perms. Re-apply.
             use std::os::unix::fs::PermissionsExt;
             let perms = std::fs::Permissions::from_mode(0o600);
             std::fs::set_permissions(&self.path, perms)?;
         }
+
+        #[cfg(not(unix))]
+        {
+            std::fs::write(&self.path, json)?;
+        }
+
         Ok(())
     }
 }
@@ -156,5 +173,19 @@ mod tests {
         store.save(&Settings::default()).expect("save");
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "expected 0600, got {mode:o}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_creates_new_file_at_0600_directly() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        // Pre-condition: file does not exist.
+        assert!(!path.exists());
+        let store = FileKeyStore::at(path.clone());
+        store.save(&Settings::default()).expect("save");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }
