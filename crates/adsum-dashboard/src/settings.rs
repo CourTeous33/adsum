@@ -226,10 +226,22 @@ impl SettingsView {
         let key = &event.keystroke.key;
         let modifiers = event.keystroke.modifiers;
 
-        // cmd+v: paste from clipboard. Wired up in Task 20 once the exact
-        // GPUI clipboard API at this Zed pin is verified. Until then, swallow
-        // the keystroke (no fallthrough into character entry).
+        // cmd+v: paste from clipboard.
         if key == "v" && modifiers.platform {
+            if let Some(item) = cx.read_from_clipboard() {
+                if let Some(text) = item.text() {
+                    let buf = match target {
+                        FocusedField::Anthropic => &mut self.anthropic_input,
+                        FocusedField::OpenAI => &mut self.openai_input,
+                        FocusedField::None => return,
+                    };
+                    // Strip newlines from pasted keys — common when copying with
+                    // a trailing newline. The trim catches whitespace too.
+                    let cleaned: String = text.lines().collect::<Vec<_>>().join("");
+                    buf.push_str(cleaned.trim());
+                    cx.notify();
+                }
+            }
             return;
         }
 
