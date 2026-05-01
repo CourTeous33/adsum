@@ -65,4 +65,29 @@ impl WikiStore {
     pub fn list_pages(&self) -> Result<Vec<PageMeta>, WikiError> {
         Ok(Vec::new())
     }
+
+    pub fn read_index(&self) -> Result<String, WikiError> {
+        Ok(std::fs::read_to_string(self.root.join("index.md"))?)
+    }
+
+    pub fn write_index(&self, content: &str) -> Result<(), WikiError> {
+        std::fs::write(self.root.join("index.md"), content)?;
+        Ok(())
+    }
+
+    pub fn read_log(&self) -> Result<String, WikiError> {
+        Ok(std::fs::read_to_string(self.root.join("log.md"))?)
+    }
+
+    /// Append `entry` plus a trailing newline to `log.md`. Caller is
+    /// responsible for the entry text (no schema enforcement here).
+    pub fn append_log(&self, entry: &str) -> Result<(), WikiError> {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(self.root.join("log.md"))?;
+        f.write_all(entry.as_bytes())?;
+        f.write_all(b"\n")?;
+        Ok(())
+    }
 }

@@ -38,3 +38,35 @@ fn open_on_existing_root_does_not_clobber_index() {
     let log = fs::read_to_string(root.join("log.md")).expect("read log");
     assert_eq!(log, "## [2026-04-01] kept | content\n");
 }
+
+#[test]
+fn read_index_returns_bootstrap_placeholder_then_write_index_overwrites_it() {
+    let dir = tempdir().expect("tempdir");
+    let root = dir.path().to_path_buf();
+    let store = WikiStore::open(root).expect("open");
+
+    let placeholder = store.read_index().expect("read placeholder");
+    assert!(placeholder.contains("Wiki Index"));
+
+    store.write_index("# Custom\n\nbody\n").expect("write index");
+    let after = store.read_index().expect("read after write");
+    assert_eq!(after, "# Custom\n\nbody\n");
+}
+
+#[test]
+fn append_log_accumulates_and_read_log_returns_full_content() {
+    let dir = tempdir().expect("tempdir");
+    let root = dir.path().to_path_buf();
+    let store = WikiStore::open(root).expect("open");
+
+    assert_eq!(store.read_log().expect("read empty"), "");
+
+    store.append_log("## [2026-05-01] ingest | one").expect("append 1");
+    store.append_log("## [2026-05-01] ingest | two").expect("append 2");
+
+    let log = store.read_log().expect("read log");
+    assert_eq!(
+        log,
+        "## [2026-05-01] ingest | one\n## [2026-05-01] ingest | two\n"
+    );
+}
