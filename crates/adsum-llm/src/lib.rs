@@ -40,9 +40,10 @@ pub struct LlmService {
     #[allow(dead_code)]
     worker: Option<std::thread::JoinHandle<()>>,
     /// Owned so the multi-thread runtime stays alive for the worker.
-    /// Drops AFTER `worker` is joined (see `Drop` impl), so in-flight
-    /// `tokio::spawn`'d tasks aren't aborted mid-flight by runtime
-    /// teardown.
+    /// Drops AFTER `worker` is joined (see `Drop` impl), guaranteeing the
+    /// dispatcher loop has fully exited before runtime teardown. Note:
+    /// in-flight `tokio::spawn`'d per-request tasks are aborted at runtime
+    /// drop — intentional for app-exit teardown.
     #[allow(dead_code)]
     runtime: tokio::runtime::Runtime,
 }

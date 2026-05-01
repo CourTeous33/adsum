@@ -10,6 +10,12 @@ pub struct ConversationsView {
     selected: Option<Session>,
 }
 
+impl Default for ConversationsView {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConversationsView {
     pub fn new() -> Self {
         let summaries = load_all_sessions().unwrap_or_else(|err| {
@@ -229,8 +235,7 @@ impl ConversationsView {
                         }
                     };
 
-                    let assistant_row =
-                        div().w_full().text_color(text_color).child(body_text);
+                    let assistant_row = div().w_full().text_color(text_color).child(body_text);
 
                     transcript = transcript.child(user_row).child(assistant_row);
                 }
