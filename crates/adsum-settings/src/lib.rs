@@ -112,6 +112,98 @@ impl KeyStore for FileKeyStore {
     }
 }
 
+// ---------- Keychain backend ----------
+
+const KEYCHAIN_SERVICE: &str = "Adsum";
+const KEYCHAIN_ACCOUNT: &str = "settings";
+
+/// Install the macOS Keychain (login keychain) as the default
+/// `keyring-core` credential store. Idempotent only as long as no other
+/// store has been installed. Call once at app startup, before constructing
+/// any `KeychainKeyStore`.
+pub fn install_keychain_backend() -> Result<(), String> {
+    use apple_native_keyring_store::keychain;
+    let store = keychain::Store::new().map_err(|e| format!("keychain store init: {e:?}"))?;
+    keyring_core::set_default_store(store);
+    Ok(())
+}
+
+/// `KeyStore` impl backed by the macOS Keychain (login keychain).
+/// Stores the entire `Settings` struct as a single JSON-encoded entry under
+/// service="Adsum", account="settings".
+pub struct KeychainKeyStore {
+    service: String,
+    account: String,
+}
+
+impl KeychainKeyStore {
+    pub fn new() -> Self {
+        Self {
+            service: KEYCHAIN_SERVICE.to_string(),
+            account: KEYCHAIN_ACCOUNT.to_string(),
+        }
+    }
+
+    fn entry(&self) -> io::Result<keyring_core::Entry> {
+        keyring_core::Entry::new(&self.service, &self.account)
+            .map_err(|e| io::Error::other(format!("keychain entry: {e:?}")))
+    }
+}
+
+impl Default for KeychainKeyStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl KeyStore for KeychainKeyStore {
+    fn load(&self) -> io::Result<Settings> {
+        let entry = self.entry()?;
+        match entry.get_password() {
+            Ok(json) => serde_json::from_str(&json)
+                .map_err(|e| io::Error::other(format!("parse keychain settings: {e}"))),
+            Err(keyring_core::Error::NoEntry) => Ok(Settings::default()),
+            Err(e) => Err(io::Error::other(format!("keychain read: {e:?}"))),
+        }
+    }
+
+    fn save(&self, settings: &Settings) -> io::Result<()> {
+        let entry = self.entry()?;
+        let json = serde_json::to_string(settings)
+            .map_err(|e| io::Error::other(format!("serialize settings: {e}")))?;
+        entry
+            .set_password(&json)
+            .map_err(|e| io::Error::other(format!("keychain write: {e:?}")))
+    }
+}
+
+/// One-time migration: if the on-disk settings file at `file_path` exists
+/// and contains a non-default `Settings` (i.e. the user actually configured
+/// something), copy it into Keychain and delete the file. Safe to call on
+/// every startup — no-op if the file is missing or already-migrated.
+pub fn migrate_file_to_keychain(file_path: &std::path::Path) -> io::Result<bool> {
+    if !file_path.exists() {
+        return Ok(false);
+    }
+    let file_store = FileKeyStore::at(file_path.to_path_buf());
+    let from_file = file_store.load()?;
+    if from_file == Settings::default() {
+        // File exists but holds only defaults — drop it without touching Keychain.
+        let _ = std::fs::remove_file(file_path);
+        return Ok(false);
+    }
+    let keychain = KeychainKeyStore::new();
+    let from_keychain = keychain.load().unwrap_or_default();
+    if from_keychain != Settings::default() {
+        // Keychain already has settings — don't overwrite. Just clean up the file.
+        let _ = std::fs::remove_file(file_path);
+        return Ok(false);
+    }
+    keychain.save(&from_file)?;
+    let _ = std::fs::remove_file(file_path);
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

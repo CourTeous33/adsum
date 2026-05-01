@@ -146,15 +146,46 @@ fn run_example() {
 
         // Shared app state + three window slots.
         let state = Arc::new(Mutex::new(AppState::default()));
+
+        // Install the macOS Keychain backend. If install fails (e.g. no
+        // login keychain available), fall back to the file-backed store so
+        // the app still launches.
         let keystore: Arc<dyn adsum_settings::KeyStore> =
-            match adsum_settings::FileKeyStore::at_default_path() {
-                Ok(s) => Arc::new(s),
+            match adsum_settings::install_keychain_backend() {
+                Ok(()) => {
+                    // Migrate the legacy plaintext settings.json into Keychain
+                    // if present. Best-effort — migration failures are logged
+                    // but don't block startup.
+                    if let Ok(path) = adsum_settings::FileKeyStore::default_path() {
+                        match adsum_settings::migrate_file_to_keychain(&path) {
+                            Ok(true) => {
+                                eprintln!(
+                                    "adsum-app: migrated settings from {} to Keychain",
+                                    path.display()
+                                );
+                            }
+                            Ok(false) => {}
+                            Err(err) => {
+                                eprintln!("adsum-app: keychain migration failed: {err:#}");
+                            }
+                        }
+                    }
+                    Arc::new(adsum_settings::KeychainKeyStore::new())
+                }
                 Err(err) => {
                     eprintln!(
-                        "adsum-app: failed to resolve settings path: {err:#}; using temp fallback"
+                        "adsum-app: keychain backend unavailable ({err}); falling back to file store"
                     );
-                    let tmp = std::env::temp_dir().join("adsum-settings-fallback.json");
-                    Arc::new(adsum_settings::FileKeyStore::at(tmp))
+                    match adsum_settings::FileKeyStore::at_default_path() {
+                        Ok(s) => Arc::new(s),
+                        Err(err) => {
+                            eprintln!(
+                                "adsum-app: failed to resolve settings path: {err:#}; using temp fallback"
+                            );
+                            let tmp = std::env::temp_dir().join("adsum-settings-fallback.json");
+                            Arc::new(adsum_settings::FileKeyStore::at(tmp))
+                        }
+                    }
                 }
             };
         let initial_settings = keystore.load().unwrap_or_else(|err| {
