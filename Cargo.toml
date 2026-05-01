@@ -6,6 +6,7 @@ members = [
     "crates/adsum-conversation",
     "crates/adsum-dashboard",
     "crates/adsum-hotkey",
+    "crates/adsum-llm",
     "crates/adsum-settings",
     "crates/adsum-state",
     "crates/adsum-tokens",
@@ -35,4 +36,4 @@ tokio              = { version = "1", features = ["rt-multi-thread", "macros", "
 reqwest            = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
 futures-util       = "0.3"
 eventsource-stream = "0.2"
-tokio-util         = { version = "0.7", features = ["sync"] }
+tokio-util         = { version = "0.7", features = ["rt"] }
