@@ -13,6 +13,7 @@ use std::sync::{Arc, RwLock};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
     Conversations,
+    Wikis,
     Settings,
 }
 
@@ -103,7 +104,8 @@ impl Dashboard {
             .border_r_1()
             .border_color(adsum_tokens::border())
             .child(nav_button(0, "▤", Section::Conversations))
-            .child(nav_button(1, "⚙", Section::Settings))
+            .child(nav_button(1, "📖", Section::Wikis))
+            .child(nav_button(2, "⚙", Section::Settings))
             .into_any_element()
     }
 }
@@ -113,6 +115,7 @@ impl Render for Dashboard {
         let nav = self.render_nav_rail(cx);
         let body = match self.active_section {
             Section::Conversations => self.conversations.render(cx),
+            Section::Wikis => placeholder_wikis_body(),
             Section::Settings => self.settings_view.render(cx),
         };
         div()
@@ -127,4 +130,18 @@ impl Render for Dashboard {
             // definite width at every level.
             .child(div().flex_1().min_w_0().child(body))
     }
+}
+
+fn placeholder_wikis_body() -> gpui::AnyElement {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            div()
+                .text_color(adsum_tokens::text_dim())
+                .child("Wikis (coming next task)"),
+        )
+        .into_any_element()
 }
