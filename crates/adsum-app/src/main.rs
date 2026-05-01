@@ -19,8 +19,12 @@ fn show_hotkey_failure_notification(hotkey: &str) {
         .status();
 }
 
+#[allow(clippy::too_many_arguments)]
 fn open_chatbox(
     state: Arc<Mutex<AppState>>,
+    settings: Arc<std::sync::RwLock<adsum_settings::Settings>>,
+    llm: Arc<adsum_llm::LlmService>,
+    in_flight_slot: Arc<Mutex<Option<tokio_util::sync::CancellationToken>>>,
     conversation_slot: Arc<Mutex<Option<gpui::WindowHandle<Conversation>>>>,
     cx: &mut App,
 ) -> gpui::WindowHandle<Chatbox> {
@@ -50,14 +54,22 @@ fn open_chatbox(
         },
         |window, cx| {
             let state = state.clone();
+            let settings = settings.clone();
+            let llm = llm.clone();
+            let in_flight_slot = in_flight_slot.clone();
             let conv_slot = conversation_slot.clone();
-            cx.new(|cx| Chatbox::new(state, conv_slot, window, cx))
+            cx.new(|cx| Chatbox::new(state, settings, llm, in_flight_slot, conv_slot, window, cx))
         },
     )
     .unwrap()
 }
 
-fn open_dashboard(cx: &mut App) -> gpui::WindowHandle<Dashboard> {
+fn open_dashboard(
+    settings: Arc<std::sync::RwLock<adsum_settings::Settings>>,
+    keystore: Arc<dyn adsum_settings::KeyStore>,
+    llm: Arc<adsum_llm::LlmService>,
+    cx: &mut App,
+) -> gpui::WindowHandle<Dashboard> {
     let dashboard_size = size(px(1024.0), px(720.0));
     let bounds = match cx.primary_display() {
         Some(display) => {
@@ -92,7 +104,10 @@ fn open_dashboard(cx: &mut App) -> gpui::WindowHandle<Dashboard> {
             // Without this, the dashboard can open behind the active app on
             // some macOS setups when summoned via the global hotkey.
             window.activate_window();
-            cx.new(|cx| Dashboard::new(window, cx))
+            let settings = settings.clone();
+            let keystore = keystore.clone();
+            let llm = llm.clone();
+            cx.new(|cx| Dashboard::new(settings, keystore, llm, window, cx))
         },
     )
     .unwrap()
@@ -131,6 +146,25 @@ fn run_example() {
 
         // Shared app state + three window slots.
         let state = Arc::new(Mutex::new(AppState::default()));
+        let keystore: Arc<dyn adsum_settings::KeyStore> =
+            match adsum_settings::FileKeyStore::at_default_path() {
+                Ok(s) => Arc::new(s),
+                Err(err) => {
+                    eprintln!(
+                        "adsum-app: failed to resolve settings path: {err:#}; using temp fallback"
+                    );
+                    let tmp = std::env::temp_dir().join("adsum-settings-fallback.json");
+                    Arc::new(adsum_settings::FileKeyStore::at(tmp))
+                }
+            };
+        let initial_settings = keystore.load().unwrap_or_else(|err| {
+            eprintln!("adsum-app: failed to load settings ({err:#}); using defaults");
+            adsum_settings::Settings::default()
+        });
+        let settings = Arc::new(std::sync::RwLock::new(initial_settings));
+        let llm = Arc::new(adsum_llm::LlmService::spawn());
+        let in_flight_slot: Arc<Mutex<Option<tokio_util::sync::CancellationToken>>> =
+            Arc::new(Mutex::new(None));
         let chatbox_slot: Arc<Mutex<Option<gpui::WindowHandle<Chatbox>>>> =
             Arc::new(Mutex::new(None));
         let conversation_slot: Arc<Mutex<Option<gpui::WindowHandle<Conversation>>>> =
@@ -219,12 +253,18 @@ fn run_example() {
         let state_for_chatbox = state.clone();
         let chatbox_slot_for_loop = chatbox_slot.clone();
         let conv_slot_for_chatbox = conversation_slot.clone();
+        let settings_for_chatbox = settings.clone();
+        let llm_for_chatbox = llm.clone();
+        let in_flight_for_chatbox = in_flight_slot.clone();
         cx.spawn(async move |async_cx| {
             while let Ok(()) = chatbox_summon_rx.recv().await {
                 let action = state_for_chatbox.lock().unwrap().handle_chatbox_summon();
                 let state = state_for_chatbox.clone();
                 let slot = chatbox_slot_for_loop.clone();
                 let conv_slot = conv_slot_for_chatbox.clone();
+                let settings = settings_for_chatbox.clone();
+                let llm = llm_for_chatbox.clone();
+                let in_flight = in_flight_for_chatbox.clone();
                 async_cx.update(move |cx: &mut App| match action {
                     SummonAction::Open => {
                         // Defensive: if a stale handle is in the slot (state
@@ -237,7 +277,14 @@ fn run_example() {
                             });
                         }
                         state.lock().unwrap().start_session();
-                        let handle = open_chatbox(state.clone(), conv_slot.clone(), cx);
+                        let handle = open_chatbox(
+                            state.clone(),
+                            settings.clone(),
+                            llm.clone(),
+                            in_flight.clone(),
+                            conv_slot.clone(),
+                            cx,
+                        );
                         *slot.lock().unwrap() = Some(handle);
                         state.lock().unwrap().set_chatbox_visible(true);
                     }
@@ -267,6 +314,9 @@ fn run_example() {
         let dashboard_summon_rx = dashboard_summon_rx.clone();
         let state_for_dashboard = state.clone();
         let dashboard_slot_for_loop = dashboard_slot.clone();
+        let settings_for_dashboard = settings.clone();
+        let keystore_for_dashboard = keystore.clone();
+        let llm_for_dashboard = llm.clone();
         cx.spawn(async move |async_cx| {
             while let Ok(()) = dashboard_summon_rx.recv().await {
                 let action = state_for_dashboard
@@ -275,6 +325,9 @@ fn run_example() {
                     .handle_dashboard_summon();
                 let state = state_for_dashboard.clone();
                 let slot = dashboard_slot_for_loop.clone();
+                let settings = settings_for_dashboard.clone();
+                let keystore = keystore_for_dashboard.clone();
+                let llm = llm_for_dashboard.clone();
                 async_cx.update(move |cx: &mut App| match action {
                     SummonAction::Open => {
                         let stale = slot.lock().unwrap().take();
@@ -283,7 +336,8 @@ fn run_example() {
                                 window.remove_window();
                             });
                         }
-                        let handle = open_dashboard(cx);
+                        let handle =
+                            open_dashboard(settings.clone(), keystore.clone(), llm.clone(), cx);
                         *slot.lock().unwrap() = Some(handle);
                         state.lock().unwrap().set_dashboard_visible(true);
                     }

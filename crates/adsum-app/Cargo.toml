@@ -15,3 +15,6 @@ gpui = { workspace = true }
 gpui-platform = { workspace = true }
 async-channel = { workspace = true }
 env_logger = { workspace = true }
+adsum-llm      = { path = "../adsum-llm" }
+adsum-settings = { path = "../adsum-settings" }
+tokio-util     = { workspace = true }
