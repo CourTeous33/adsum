@@ -35,8 +35,28 @@ pub enum LlmChunk {
 
 pub struct LlmService {
     request_tx: async_channel::Sender<LlmRequest>,
-    _runtime: tokio::runtime::Runtime,
-    _worker: std::thread::JoinHandle<()>,
+    /// Owned for its `JoinHandle` lifetime. Joined explicitly in `Drop` so
+    /// the dispatcher exits before the runtime is torn down.
+    #[allow(dead_code)]
+    worker: Option<std::thread::JoinHandle<()>>,
+    /// Owned so the multi-thread runtime stays alive for the worker.
+    /// Drops AFTER `worker` is joined (see `Drop` impl), so in-flight
+    /// `tokio::spawn`'d tasks aren't aborted mid-flight by runtime
+    /// teardown.
+    #[allow(dead_code)]
+    runtime: tokio::runtime::Runtime,
+}
+
+impl Drop for LlmService {
+    fn drop(&mut self) {
+        // 1. Close the request channel so the dispatcher's recv() returns Err.
+        self.request_tx.close();
+        // 2. Join the worker; ignores poison since teardown is best-effort.
+        if let Some(handle) = self.worker.take() {
+            let _ = handle.join();
+        }
+        // 3. `runtime` drops naturally after this fn returns.
+    }
 }
 
 impl LlmService {
@@ -65,8 +85,8 @@ impl LlmService {
 
         Self {
             request_tx,
-            _runtime: runtime,
-            _worker: worker,
+            worker: Some(worker),
+            runtime,
         }
     }
 
