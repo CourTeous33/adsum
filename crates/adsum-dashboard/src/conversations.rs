@@ -51,6 +51,7 @@ impl ConversationsView {
         if self.summaries.is_empty() {
             return div()
                 .w(px(320.0))
+                .flex_shrink_0()
                 .h_full()
                 .bg(adsum_tokens::bg_primary())
                 .border_r_1()
@@ -71,6 +72,7 @@ impl ConversationsView {
             .flex()
             .flex_col()
             .w(px(320.0))
+            .flex_shrink_0()
             .h_full()
             .bg(adsum_tokens::bg_primary())
             .border_r_1()
@@ -208,6 +210,7 @@ impl ConversationsView {
                         )
                         .child(
                             div()
+                                .flex_1()
                                 .text_color(adsum_tokens::text_primary())
                                 .child(turn.user_text.clone()),
                         );
@@ -240,7 +243,7 @@ impl ConversationsView {
                         .flex_row()
                         .gap_2()
                         .child(div().w(px(20.0)).text_color(indicator_color).child("◦"))
-                        .child(div().text_color(text_color).child(body_text));
+                        .child(div().flex_1().text_color(text_color).child(body_text));
 
                     transcript = transcript.child(user_row).child(assistant_row);
                 }
@@ -249,7 +252,8 @@ impl ConversationsView {
                     .flex_1()
                     .flex()
                     .flex_col()
-                    .p_5()
+                    .px_8()
+                    .py_5()
                     .child(header)
                     .child(transcript)
                     .into_any_element()

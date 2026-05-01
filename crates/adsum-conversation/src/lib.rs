@@ -66,6 +66,7 @@ impl Render for Conversation {
                 )
                 .child(
                     div()
+                        .flex_1()
                         .text_color(adsum_tokens::text_primary())
                         .child(turn.user_text.clone()),
                 );
@@ -104,7 +105,7 @@ impl Render for Conversation {
                 .flex_row()
                 .gap_2()
                 .child(div().w(px(20.0)).text_color(indicator_color).child("◦"))
-                .child(div().text_color(text_color).child(body_text));
+                .child(div().flex_1().text_color(text_color).child(body_text));
 
             transcript = transcript.child(user_row).child(assistant_row);
         }

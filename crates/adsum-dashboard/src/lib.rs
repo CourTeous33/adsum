@@ -97,6 +97,7 @@ impl Dashboard {
             .gap_3()
             .pt_3()
             .w(px(adsum_tokens::NAV_RAIL_W))
+            .flex_shrink_0()
             .h_full()
             .bg(adsum_tokens::bg_primary())
             .border_r_1()
