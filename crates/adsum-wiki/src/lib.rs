@@ -90,4 +90,37 @@ impl WikiStore {
         f.write_all(b"\n")?;
         Ok(())
     }
+
+    pub fn write_page(&self, slug: &str, content: &str) -> Result<(), WikiError> {
+        validate_slug(slug)?;
+        let path = self.root.join("pages").join(format!("{slug}.md"));
+        std::fs::write(path, content)?;
+        Ok(())
+    }
+
+    pub fn read_page(&self, slug: &str) -> Result<String, WikiError> {
+        let path = self.root.join("pages").join(format!("{slug}.md"));
+        match std::fs::read_to_string(&path) {
+            Ok(s) => Ok(s),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                Err(WikiError::PageNotFound(slug.to_string()))
+            }
+            Err(err) => Err(WikiError::Io(err)),
+        }
+    }
+}
+
+/// Slug validator. Outbound writes must match `^[a-z0-9][a-z0-9-]*$`.
+/// Inbound reads (e.g. `list_pages`) are lenient and accept whatever's on
+/// disk — humans hand-edit and may drop `Some Entity.md`.
+fn validate_slug(slug: &str) -> Result<(), WikiError> {
+    let mut chars = slug.chars();
+    let first = chars.next();
+    let first_ok = matches!(first, Some(c) if c.is_ascii_lowercase() || c.is_ascii_digit());
+    let rest_ok = chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if first_ok && rest_ok {
+        Ok(())
+    } else {
+        Err(WikiError::InvalidSlug(slug.to_string()))
+    }
 }

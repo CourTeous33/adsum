@@ -70,3 +70,59 @@ fn append_log_accumulates_and_read_log_returns_full_content() {
         "## [2026-05-01] ingest | one\n## [2026-05-01] ingest | two\n"
     );
 }
+
+#[test]
+fn write_page_then_read_page_roundtrip() {
+    let dir = tempdir().expect("tempdir");
+    let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
+
+    store.write_page("font-kit-bug", "# notes\nbody\n").expect("write");
+    let content = store.read_page("font-kit-bug").expect("read");
+    assert_eq!(content, "# notes\nbody\n");
+}
+
+#[test]
+fn write_page_overwrites_existing_content() {
+    let dir = tempdir().expect("tempdir");
+    let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
+
+    store.write_page("foo", "first").expect("write 1");
+    store.write_page("foo", "second").expect("write 2");
+    assert_eq!(store.read_page("foo").expect("read"), "second");
+}
+
+#[test]
+fn write_page_rejects_invalid_slugs() {
+    let dir = tempdir().expect("tempdir");
+    let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
+
+    let bad = [
+        "",                 // empty
+        "Foo",              // uppercase
+        "foo bar",          // space
+        "foo.md",           // dot
+        "foo/bar",          // slash
+        "..",               // path traversal
+        "-leading-dash",    // leading dash
+        "foo_bar",          // underscore
+    ];
+    for slug in bad {
+        let result = store.write_page(slug, "x");
+        assert!(
+            matches!(result, Err(adsum_wiki::WikiError::InvalidSlug(_))),
+            "expected InvalidSlug for {slug:?}, got {result:?}"
+        );
+    }
+}
+
+#[test]
+fn read_page_returns_page_not_found_for_missing_slug() {
+    let dir = tempdir().expect("tempdir");
+    let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
+
+    let result = store.read_page("does-not-exist");
+    assert!(
+        matches!(&result, Err(adsum_wiki::WikiError::PageNotFound(s)) if s == "does-not-exist"),
+        "expected PageNotFound, got {result:?}"
+    );
+}
