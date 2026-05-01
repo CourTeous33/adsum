@@ -46,73 +46,47 @@ impl Render for Conversation {
             .id("conversation-transcript")
             .flex()
             .flex_col()
-            .gap_3()
+            .gap_5()
             .p_4()
             .overflow_y_scroll()
             .size_full()
             .text_size(px(adsum_tokens::TEXT_BODY));
 
         for turn in turns.iter() {
-            // User row — same style for every kind.
-            let user_row = div()
-                .flex()
-                .flex_row()
-                .gap_2()
-                .child(
-                    div()
-                        .w(px(20.0))
-                        .text_color(adsum_tokens::accent())
-                        .child("▸"),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .text_color(adsum_tokens::text_primary())
-                        .child(turn.user_text.clone()),
-                );
+            // User: right-aligned bubble (Claude.ai style). The bubble sits in
+            // a flex_row(justify_end) container; the bubble itself has max_w
+            // so long text wraps inside it instead of stretching full width.
+            let user_row = div().w_full().flex().flex_row().justify_end().child(
+                div()
+                    .max_w(px(480.0))
+                    .px_4()
+                    .py_2()
+                    .rounded(px(12.0))
+                    .bg(adsum_tokens::bg_hover())
+                    .text_color(adsum_tokens::text_primary())
+                    .child(turn.user_text.clone()),
+            );
 
-            // Assistant row — branches on TurnKind.
-            let (indicator_color, text_color, body_text) = match &turn.kind {
-                TurnKind::Ok => (
-                    adsum_tokens::text_muted(),
-                    adsum_tokens::text_primary(),
-                    turn.assistant_text.clone(),
-                ),
+            // Assistant: plain text, full width (no bubble).
+            let (text_color, body_text) = match &turn.kind {
+                TurnKind::Ok => (adsum_tokens::text_primary(), turn.assistant_text.clone()),
                 TurnKind::InProgress => (
-                    adsum_tokens::text_muted(),
                     adsum_tokens::text_primary(),
                     format!("{}▌", turn.assistant_text),
                 ),
-                TurnKind::Cancelled if turn.assistant_text.is_empty() => (
-                    adsum_tokens::text_dim(),
-                    adsum_tokens::text_dim(),
-                    "(cancelled)".into(),
-                ),
+                TurnKind::Cancelled if turn.assistant_text.is_empty() => {
+                    (adsum_tokens::text_dim(), "(cancelled)".into())
+                }
                 TurnKind::Cancelled => (
-                    adsum_tokens::text_muted(),
                     adsum_tokens::text_primary(),
                     format!("{}…", turn.assistant_text),
                 ),
-                TurnKind::Error { message, .. } => (
-                    adsum_tokens::error_red(),
-                    adsum_tokens::error_red(),
-                    format!("Error: {message}"),
-                ),
+                TurnKind::Error { message, .. } => {
+                    (adsum_tokens::error_red(), format!("Error: {message}"))
+                }
             };
 
-            let assistant_row = div()
-                .flex()
-                .flex_row()
-                .gap_2()
-                .child(div().w(px(20.0)).text_color(indicator_color).child("◦"))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .text_color(text_color)
-                        .child(body_text),
-                );
+            let assistant_row = div().w_full().text_color(text_color).child(body_text);
 
             transcript = transcript.child(user_row).child(assistant_row);
         }

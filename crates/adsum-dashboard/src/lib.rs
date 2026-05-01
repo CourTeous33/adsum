@@ -121,6 +121,10 @@ impl Render for Dashboard {
             .size_full()
             .bg(adsum_tokens::bg_primary())
             .child(nav)
-            .child(body)
+            // body must be flex_1 + min_w_0 to claim remaining horizontal
+            // space and propagate a definite width down to its descendants —
+            // text inside descendants only wraps when the layout chain has a
+            // definite width at every level.
+            .child(div().flex_1().min_w_0().child(body))
     }
 }
