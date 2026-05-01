@@ -126,6 +126,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "adsum-wiki"
+version = "0.1.0"
+dependencies = [
+ "dirs 5.0.1",
+ "tempfile",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "aes"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
