@@ -79,10 +79,12 @@ impl Chatbox {
         let modifiers = event.keystroke.modifiers;
 
         if key == "escape" {
+            self.cancel_in_flight();
             window.remove_window();
             return;
         }
         if key == "q" && modifiers.platform {
+            self.cancel_in_flight();
             cx.quit();
             return;
         }
@@ -242,6 +244,8 @@ impl Render for Chatbox {
             (self.current_text.clone(), adsum_tokens::text_primary())
         };
 
+        let is_streaming = self.in_flight_slot.lock().unwrap().is_some();
+
         div()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|this, event, window, cx| {
@@ -260,6 +264,11 @@ impl Render for Chatbox {
             .shadow_lg()
             .text_size(px(adsum_tokens::TEXT_INPUT))
             .child(div().text_color(adsum_tokens::accent()).child("▸"))
+            .children(if is_streaming {
+                Some(div().text_color(adsum_tokens::text_dim()).child("…"))
+            } else {
+                None
+            })
             .child(div().text_color(display_text.1).child(display_text.0))
     }
 }
