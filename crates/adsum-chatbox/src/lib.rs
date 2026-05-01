@@ -91,7 +91,123 @@ impl Chatbox {
         }
 
         if key == "enter" {
-            // Replaced in Task 15 with streaming LLM call.
+            if self.current_text.is_empty() {
+                return;
+            }
+            // Sequential-turn lockout: ignore Enter while a stream is in flight.
+            if self.in_flight_slot.lock().unwrap().is_some() {
+                return;
+            }
+
+            // 1. Resolve model + key from settings snapshot.
+            let (model, api_key) = {
+                let s = self.settings.read().unwrap();
+                let key = match s.default_model.provider {
+                    adsum_settings::Provider::Anthropic => {
+                        s.anthropic_api_key.clone().unwrap_or_default()
+                    }
+                    adsum_settings::Provider::OpenAI => {
+                        s.openai_api_key.clone().unwrap_or_default()
+                    }
+                };
+                (s.default_model.clone(), key)
+            };
+
+            // 2. Snapshot the messages-so-far + push the new user message.
+            let messages = {
+                let st = self.state.lock().unwrap();
+                let mut msgs = st
+                    .current_session()
+                    .map(|s| s.messages_for_llm())
+                    .unwrap_or_default();
+                msgs.push(adsum_state::Message {
+                    role: adsum_state::Role::User,
+                    content: self.current_text.clone(),
+                });
+                msgs
+            };
+
+            // 3. Push InProgress turn into AppState.
+            let user_text = std::mem::take(&mut self.current_text);
+            self.state
+                .lock()
+                .unwrap()
+                .begin_turn(user_text, model.clone());
+
+            // 4. Open the conversation window if needed.
+            let conv_handle = *self.conversation_slot.lock().unwrap();
+            match conv_handle {
+                Some(handle) => {
+                    let _ = handle.update(cx, |_view, _window, cx| cx.notify());
+                }
+                None => {
+                    let new_handle = open_conversation_window(self.state.clone(), cx);
+                    *self.conversation_slot.lock().unwrap() = Some(new_handle);
+                }
+            }
+
+            // 5. Spawn the request: cancel token, channel, fire LlmRequest.
+            let cancel = CancellationToken::new();
+            let (chunks_tx, chunks_rx) = async_channel::unbounded::<adsum_llm::LlmChunk>();
+            self.llm.send(adsum_llm::LlmRequest {
+                messages,
+                model,
+                api_key,
+                system: adsum_llm::SYSTEM_PROMPT,
+                chunks_tx,
+                cancel: cancel.clone(),
+            });
+            *self.in_flight_slot.lock().unwrap() = Some(cancel);
+
+            // 6. Pump chunks back into AppState + notify both windows.
+            let state = self.state.clone();
+            let conv_slot = self.conversation_slot.clone();
+            let in_flight_slot = self.in_flight_slot.clone();
+            // Drive updates through the chatbox window handle so we can
+            // detect window-closed (Result::Err) and stop pumping.
+            let chatbox_window: gpui::WindowHandle<Self> = window
+                .window_handle()
+                .downcast::<Self>()
+                .expect("chatbox window must have Chatbox as its root view");
+            cx.spawn(async move |_, cx| {
+                while let Ok(chunk) = chunks_rx.recv().await {
+                    let done = matches!(
+                        chunk,
+                        adsum_llm::LlmChunk::Done | adsum_llm::LlmChunk::Error { .. }
+                    );
+                    let r = chatbox_window.update(cx, |_view, _window, cx| {
+                        {
+                            let mut st = state.lock().unwrap();
+                            match chunk {
+                                adsum_llm::LlmChunk::Text(t) => st.append_chunk(&t),
+                                adsum_llm::LlmChunk::Done => {
+                                    st.finalize_turn(adsum_state::TurnKind::Ok)
+                                }
+                                adsum_llm::LlmChunk::Error { code, message } => {
+                                    st.finalize_turn(adsum_state::TurnKind::Error {
+                                        code,
+                                        message,
+                                    });
+                                }
+                            }
+                        }
+                        let conv_handle_opt = *conv_slot.lock().unwrap();
+                        if let Some(h) = conv_handle_opt {
+                            let _ = h.update(cx, |_, _, cx| cx.notify());
+                        }
+                        cx.notify();
+                        if done {
+                            *in_flight_slot.lock().unwrap() = None;
+                        }
+                    });
+                    if r.is_err() || done {
+                        break;
+                    }
+                }
+            })
+            .detach();
+
+            cx.notify();
             return;
         }
         if key == "backspace" {
@@ -149,7 +265,6 @@ impl Render for Chatbox {
 }
 
 /// Open a fresh Conversation window positioned directly above the chatbox.
-#[allow(dead_code)]
 fn open_conversation_window(
     state: Arc<Mutex<AppState>>,
     cx: &mut App,
