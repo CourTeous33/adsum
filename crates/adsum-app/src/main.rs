@@ -196,9 +196,12 @@ fn run_example() {
         });
         let settings = Arc::new(std::sync::RwLock::new(initial_settings));
         let llm = Arc::new(adsum_llm::LlmService::spawn());
-        // Wiki store. Path resolution + bootstrap happens here. If the
-        // directory can't be created (no data_dir, permission denied), log,
-        // notify, and exit non-zero — same shape as KeyStore failures.
+        // Wiki store. Path resolution + bootstrap happens here. Bootstrap
+        // failures are fatal: without a wiki root the dashboard's Wikis
+        // section has nothing to render, so log + notify + exit non-zero
+        // rather than launch into a broken UI. (KeyStore by contrast can
+        // fall back to a temp-dir file store, but a missing wiki dir has no
+        // analogous degradation path that's still useful.)
         let wiki_root = match dirs::data_dir() {
             Some(base) => base.join("Adsum").join("wiki"),
             None => {
