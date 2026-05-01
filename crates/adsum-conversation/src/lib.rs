@@ -2,9 +2,16 @@
 //! session. Lives in a separate PopUp window summoned by the chatbox on
 //! first Enter.
 
-use adsum_state::AppState;
+use adsum_state::{AppState, TurnKind};
 use gpui::{div, prelude::*, px, Context, Render, Window};
 use std::sync::{Arc, Mutex};
+
+#[derive(Clone)]
+struct TurnSnapshot {
+    user_text: String,
+    assistant_text: String,
+    kind: TurnKind,
+}
 
 pub struct Conversation {
     state: Arc<Mutex<AppState>>,
@@ -18,14 +25,18 @@ impl Conversation {
 
 impl Render for Conversation {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let turns: Vec<(String, String)> = {
+        let turns: Vec<TurnSnapshot> = {
             let state = self.state.lock().unwrap();
             state
                 .current_session()
                 .map(|s| {
                     s.turns
                         .iter()
-                        .map(|t| (t.user_text.clone(), t.response.clone()))
+                        .map(|t| TurnSnapshot {
+                            user_text: t.user_text.clone(),
+                            assistant_text: t.assistant_text.clone(),
+                            kind: t.kind.clone(),
+                        })
                         .collect()
                 })
                 .unwrap_or_default()
@@ -41,42 +52,66 @@ impl Render for Conversation {
             .size_full()
             .text_size(px(adsum_tokens::TEXT_BODY));
 
-        for (user_text, response) in turns.iter() {
-            transcript = transcript
+        for turn in turns.iter() {
+            // User row — same style for every kind.
+            let user_row = div()
+                .flex()
+                .flex_row()
+                .gap_2()
                 .child(
                     div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .child(
-                            div()
-                                .w(px(20.0))
-                                .text_color(adsum_tokens::accent())
-                                .child("▸"),
-                        )
-                        .child(
-                            div()
-                                .text_color(adsum_tokens::text_primary())
-                                .child(user_text.clone()),
-                        ),
+                        .w(px(20.0))
+                        .text_color(adsum_tokens::accent())
+                        .child("▸"),
                 )
                 .child(
                     div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .child(
-                            div()
-                                .w(px(20.0))
-                                .text_color(adsum_tokens::text_muted())
-                                .child("◦"),
-                        )
-                        .child(
-                            div()
-                                .text_color(adsum_tokens::text_primary())
-                                .child(response.clone()),
-                        ),
+                        .text_color(adsum_tokens::text_primary())
+                        .child(turn.user_text.clone()),
                 );
+
+            // Assistant row — branches on TurnKind.
+            let (indicator_color, text_color, body_text) = match &turn.kind {
+                TurnKind::Ok => (
+                    adsum_tokens::text_muted(),
+                    adsum_tokens::text_primary(),
+                    turn.assistant_text.clone(),
+                ),
+                TurnKind::InProgress => (
+                    adsum_tokens::text_muted(),
+                    adsum_tokens::text_primary(),
+                    format!("{}▌", turn.assistant_text),
+                ),
+                TurnKind::Cancelled if turn.assistant_text.is_empty() => (
+                    adsum_tokens::text_dim(),
+                    adsum_tokens::text_dim(),
+                    "(cancelled)".into(),
+                ),
+                TurnKind::Cancelled => (
+                    adsum_tokens::text_muted(),
+                    adsum_tokens::text_primary(),
+                    format!("{}…", turn.assistant_text),
+                ),
+                TurnKind::Error { message, .. } => (
+                    adsum_tokens::error_red(),
+                    adsum_tokens::error_red(),
+                    format!("Error: {message}"),
+                ),
+            };
+
+            let assistant_row = div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .child(
+                    div()
+                        .w(px(20.0))
+                        .text_color(indicator_color)
+                        .child("◦"),
+                )
+                .child(div().text_color(text_color).child(body_text));
+
+            transcript = transcript.child(user_row).child(assistant_row);
         }
 
         div()
