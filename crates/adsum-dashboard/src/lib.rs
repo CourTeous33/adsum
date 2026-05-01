@@ -1,9 +1,14 @@
 //! Dashboard window: nav rail + active section view.
 
 mod conversations;
+mod settings;
 
+use adsum_llm::LlmService;
+use adsum_settings::{KeyStore, Settings};
 pub use conversations::ConversationsView;
 use gpui::{div, prelude::*, px, AnyElement, Context, MouseButton, Render, Window};
+pub use settings::SettingsView;
+use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
@@ -14,14 +19,27 @@ pub enum Section {
 pub struct Dashboard {
     active_section: Section,
     pub(crate) conversations: ConversationsView,
+    pub(crate) settings_view: SettingsView,
 }
 
 impl Dashboard {
-    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        settings: Arc<RwLock<Settings>>,
+        keystore: Arc<dyn KeyStore>,
+        _llm: Arc<LlmService>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let settings_view = SettingsView::new(settings, keystore, cx);
         Self {
             active_section: Section::Conversations,
             conversations: ConversationsView::new(),
+            settings_view,
         }
+    }
+
+    pub fn settings_view_mut(&mut self) -> &mut SettingsView {
+        &mut self.settings_view
     }
 
     fn set_section(&mut self, section: Section, cx: &mut Context<Self>) {
@@ -94,17 +112,7 @@ impl Render for Dashboard {
         let nav = self.render_nav_rail(cx);
         let body = match self.active_section {
             Section::Conversations => self.conversations.render(cx),
-            Section::Settings => div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .text_color(adsum_tokens::text_dim())
-                        .child("Settings — coming in Task 19"),
-                )
-                .into_any_element(),
+            Section::Settings => self.settings_view.render(cx),
         };
         div()
             .flex()

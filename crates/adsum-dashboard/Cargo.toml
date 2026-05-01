@@ -8,4 +8,6 @@ publish.workspace = true
 [dependencies]
 adsum-state = { path = "../adsum-state" }
 adsum-tokens = { path = "../adsum-tokens" }
+adsum-llm      = { path = "../adsum-llm" }
+adsum-settings = { path = "../adsum-settings" }
 gpui = { workspace = true }
