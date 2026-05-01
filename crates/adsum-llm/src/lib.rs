@@ -106,11 +106,41 @@ impl LlmService {
 static SUPPORTED_MODELS: std::sync::LazyLock<Vec<(&'static str, ModelId)>> =
     std::sync::LazyLock::new(|| {
         vec![
-            ("Claude Opus 4.7",   ModelId { provider: Provider::Anthropic, name: "claude-opus-4-7".into() }),
-            ("Claude Sonnet 4.6", ModelId { provider: Provider::Anthropic, name: "claude-sonnet-4-6".into() }),
-            ("Claude Haiku 4.5",  ModelId { provider: Provider::Anthropic, name: "claude-haiku-4-5".into() }),
-            ("GPT-5",             ModelId { provider: Provider::OpenAI,    name: "gpt-5".into() }),
-            ("GPT-5 mini",        ModelId { provider: Provider::OpenAI,    name: "gpt-5-mini".into() }),
+            (
+                "Claude Opus 4.7",
+                ModelId {
+                    provider: Provider::Anthropic,
+                    name: "claude-opus-4-7".into(),
+                },
+            ),
+            (
+                "Claude Sonnet 4.6",
+                ModelId {
+                    provider: Provider::Anthropic,
+                    name: "claude-sonnet-4-6".into(),
+                },
+            ),
+            (
+                "Claude Haiku 4.5",
+                ModelId {
+                    provider: Provider::Anthropic,
+                    name: "claude-haiku-4-5".into(),
+                },
+            ),
+            (
+                "GPT-5",
+                ModelId {
+                    provider: Provider::OpenAI,
+                    name: "gpt-5".into(),
+                },
+            ),
+            (
+                "GPT-5 mini",
+                ModelId {
+                    provider: Provider::OpenAI,
+                    name: "gpt-5-mini".into(),
+                },
+            ),
         ]
     });
 
@@ -135,16 +165,24 @@ async fn handle_request(client: reqwest::Client, req: LlmRequest) {
     type ChunkStream =
         std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<String, ProviderError>> + Send>>;
     let stream_result: Result<ChunkStream, ProviderError> = match req.model.provider {
-        Provider::Anthropic => {
-            anthropic::stream(&client, &req.api_key, &req.model.name, &req.messages, req.system)
-                .await
-                .map(|s| Box::pin(s) as ChunkStream)
-        }
-        Provider::OpenAI => {
-            openai::stream(&client, &req.api_key, &req.model.name, &req.messages, req.system)
-                .await
-                .map(|s| Box::pin(s) as ChunkStream)
-        }
+        Provider::Anthropic => anthropic::stream(
+            &client,
+            &req.api_key,
+            &req.model.name,
+            &req.messages,
+            req.system,
+        )
+        .await
+        .map(|s| Box::pin(s) as ChunkStream),
+        Provider::OpenAI => openai::stream(
+            &client,
+            &req.api_key,
+            &req.model.name,
+            &req.messages,
+            req.system,
+        )
+        .await
+        .map(|s| Box::pin(s) as ChunkStream),
     };
 
     let mut stream = match stream_result {
@@ -215,8 +253,11 @@ mod tests {
             .iter()
             .map(|(_, id)| id.name.as_str())
             .collect();
-        assert!(names.contains(&default.name.as_str()),
-            "default model {} not in supported_models()", default.name);
+        assert!(
+            names.contains(&default.name.as_str()),
+            "default model {} not in supported_models()",
+            default.name
+        );
     }
 
     #[test]

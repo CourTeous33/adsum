@@ -55,8 +55,8 @@ impl FileKeyStore {
     }
 
     pub fn default_path() -> io::Result<PathBuf> {
-        let base = dirs::data_dir()
-            .ok_or_else(|| io::Error::other("could not resolve data_dir"))?;
+        let base =
+            dirs::data_dir().ok_or_else(|| io::Error::other("could not resolve data_dir"))?;
         Ok(base.join("Adsum").join("settings.json"))
     }
 
@@ -75,8 +75,7 @@ impl KeyStore for FileKeyStore {
             return Ok(Settings::default());
         }
         let json = std::fs::read_to_string(&self.path)?;
-        serde_json::from_str(&json)
-            .map_err(|e| io::Error::other(format!("parse settings: {e}")))
+        serde_json::from_str(&json).map_err(|e| io::Error::other(format!("parse settings: {e}")))
     }
 
     fn save(&self, settings: &Settings) -> io::Result<()> {
@@ -146,7 +145,11 @@ mod tests {
     #[test]
     fn save_creates_parent_directory() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("nested").join("subdir").join("settings.json");
+        let path = dir
+            .path()
+            .join("nested")
+            .join("subdir")
+            .join("settings.json");
         let store = FileKeyStore::at(path.clone());
         store.save(&Settings::default()).expect("save");
         assert!(path.exists());
@@ -159,8 +162,10 @@ mod tests {
         std::fs::write(&path, "{ this is not json").unwrap();
         let store = FileKeyStore::at(path);
         let err = store.load().expect_err("expected parse error");
-        assert!(err.to_string().to_lowercase().contains("parse")
-            || err.to_string().to_lowercase().contains("expected"));
+        assert!(
+            err.to_string().to_lowercase().contains("parse")
+                || err.to_string().to_lowercase().contains("expected")
+        );
     }
 
     #[cfg(unix)]

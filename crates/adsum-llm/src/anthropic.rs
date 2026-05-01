@@ -84,8 +84,12 @@ pub async fn stream(
 
 fn parse_event_stream<S>(events: S) -> impl Stream<Item = Result<String, ProviderError>>
 where
-    S: Stream<Item = Result<eventsource_stream::Event, eventsource_stream::EventStreamError<reqwest::Error>>>
-        + Unpin,
+    S: Stream<
+            Item = Result<
+                eventsource_stream::Event,
+                eventsource_stream::EventStreamError<reqwest::Error>,
+            >,
+        > + Unpin,
 {
     use futures_util::stream::unfold;
     unfold(events, |mut events| async move {

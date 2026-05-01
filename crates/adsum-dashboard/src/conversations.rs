@@ -124,33 +124,32 @@ impl ConversationsView {
                 row = row.bg(adsum_tokens::bg_hover());
             }
             sidebar = sidebar.child(
-                row.child(div().w(px(3.0)).h_full().bg(stripe_color))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .px_4()
-                            .py_3()
-                            .child(
-                                div()
-                                    .text_size(px(adsum_tokens::TEXT_META))
-                                    .text_color(adsum_tokens::text_muted())
-                                    .child(timestamp),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(adsum_tokens::TEXT_BODY))
-                                    .text_color(adsum_tokens::text_primary())
-                                    .child(preview),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(adsum_tokens::TEXT_META))
-                                    .text_color(adsum_tokens::text_dim())
-                                    .child(format!("{turn_count} turns")),
-                            ),
-                    ),
+                row.child(div().w(px(3.0)).h_full().bg(stripe_color)).child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .px_4()
+                        .py_3()
+                        .child(
+                            div()
+                                .text_size(px(adsum_tokens::TEXT_META))
+                                .text_color(adsum_tokens::text_muted())
+                                .child(timestamp),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(adsum_tokens::TEXT_BODY))
+                                .text_color(adsum_tokens::text_primary())
+                                .child(preview),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(adsum_tokens::TEXT_META))
+                                .text_color(adsum_tokens::text_dim())
+                                .child(format!("{turn_count} turns")),
+                        ),
+                ),
             );
         }
         sidebar.into_any_element()
@@ -240,12 +239,7 @@ impl ConversationsView {
                         .flex()
                         .flex_row()
                         .gap_2()
-                        .child(
-                            div()
-                                .w(px(20.0))
-                                .text_color(indicator_color)
-                                .child("◦"),
-                        )
+                        .child(div().w(px(20.0)).text_color(indicator_color).child("◦"))
                         .child(div().text_color(text_color).child(body_text));
 
                     transcript = transcript.child(user_row).child(assistant_row);

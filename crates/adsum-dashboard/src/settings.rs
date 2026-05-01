@@ -178,12 +178,10 @@ impl SettingsView {
                             );
                         }),
                     )
-                    .on_key_down(cx.listener(
-                        move |this, event: &KeyDownEvent, _window, cx| {
-                            this.settings_view_mut()
-                                .handle_key_field_input(target_for_key, event, cx);
-                        },
-                    ))
+                    .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _window, cx| {
+                        this.settings_view_mut()
+                            .handle_key_field_input(target_for_key, event, cx);
+                    }))
                     .child(if let Some(ph) = placeholder {
                         div()
                             .text_color(adsum_tokens::text_dim())
@@ -383,30 +381,25 @@ impl SettingsView {
             SaveStatus::Saved => Some(("Saved ✓".to_string(), adsum_tokens::accent())),
             SaveStatus::Error(e) => Some((format!("Error: {e}"), adsum_tokens::error_red())),
         };
-        let mut row = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_3()
-            .child(
-                div()
-                    .id("settings-save-button")
-                    .px_4()
-                    .py_2()
-                    .border_1()
-                    .border_color(adsum_tokens::accent())
-                    .text_size(px(adsum_tokens::TEXT_BODY))
-                    .text_color(adsum_tokens::accent())
-                    .cursor_pointer()
-                    .hover(|s| s.bg(adsum_tokens::bg_hover()))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _event, _window, cx| {
-                            this.settings_view_mut().save(cx);
-                        }),
-                    )
-                    .child("Save"),
-            );
+        let mut row = div().flex().flex_row().items_center().gap_3().child(
+            div()
+                .id("settings-save-button")
+                .px_4()
+                .py_2()
+                .border_1()
+                .border_color(adsum_tokens::accent())
+                .text_size(px(adsum_tokens::TEXT_BODY))
+                .text_color(adsum_tokens::accent())
+                .cursor_pointer()
+                .hover(|s| s.bg(adsum_tokens::bg_hover()))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _event, _window, cx| {
+                        this.settings_view_mut().save(cx);
+                    }),
+                )
+                .child("Save"),
+        );
         if let Some((text, color)) = status_text {
             row = row.child(div().text_color(color).child(text));
         }
