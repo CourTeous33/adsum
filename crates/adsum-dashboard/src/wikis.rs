@@ -75,6 +75,25 @@ impl WikisView {
         //      remaining vertical space.
         // The bottom border on the top region is the visual separator
         // between pinned and scrollable content (no free-floating divider).
+        let tabs_row = div()
+            .flex()
+            .flex_row()
+            .child(pinned_tab(
+                cx,
+                0,
+                "index",
+                Selection::Index,
+                self.selection == Selection::Index,
+            ))
+            .child(div().w(px(1.0)).bg(adsum_tokens::border()))
+            .child(pinned_tab(
+                cx,
+                1,
+                "log",
+                Selection::Log,
+                self.selection == Selection::Log,
+            ));
+
         let top = div()
             .flex()
             .flex_col()
@@ -89,20 +108,7 @@ impl WikisView {
                     .text_color(adsum_tokens::text_primary())
                     .child("Wiki"),
             )
-            .child(pinned_row(
-                cx,
-                0,
-                "index",
-                Selection::Index,
-                self.selection == Selection::Index,
-            ))
-            .child(pinned_row(
-                cx,
-                1,
-                "log",
-                Selection::Log,
-                self.selection == Selection::Log,
-            ));
+            .child(tabs_row);
 
         let mut pages_list = div()
             .id("wikis-pages")
@@ -207,24 +213,41 @@ fn label_for(sel: &Selection) -> String {
     }
 }
 
-fn pinned_row(
+/// One half of the pinned tabs row (index | log). `flex_1` so the two tabs
+/// share width equally inside the parent `flex_row`. Selection is shown via
+/// `bg_hover` background + `accent` text + a 2px `accent` underline; there's
+/// no left stripe because the side-by-side layout reads better with a
+/// horizontal indicator than a vertical one.
+fn pinned_tab(
     cx: &mut Context<crate::Dashboard>,
     idx: usize,
     label: &'static str,
     target: Selection,
     is_selected: bool,
 ) -> AnyElement {
-    let stripe_color = if is_selected {
+    let bg = if is_selected {
+        adsum_tokens::bg_hover()
+    } else {
+        adsum_tokens::bg_primary()
+    };
+    let text_color = if is_selected {
+        adsum_tokens::accent()
+    } else {
+        adsum_tokens::text_muted()
+    };
+    let underline = if is_selected {
         adsum_tokens::accent()
     } else {
         adsum_tokens::bg_primary()
     };
-    let mut row = div()
+    div()
         .id(("wikis-pinned", idx))
+        .flex_1()
         .flex()
-        .flex_row()
-        .border_b_1()
-        .border_color(adsum_tokens::border())
+        .flex_col()
+        .items_center()
+        .py_3()
+        .bg(bg)
         .hover(|s| s.bg(adsum_tokens::bg_hover()))
         .cursor_pointer()
         .on_mouse_down(
@@ -232,19 +255,19 @@ fn pinned_row(
             cx.listener(move |this, _event, _window, cx| {
                 this.wikis.select(target.clone(), cx);
             }),
-        );
-    if is_selected {
-        row = row.bg(adsum_tokens::bg_hover());
-    }
-    row.child(div().w(px(3.0)).h_full().bg(stripe_color))
+        )
         .child(
             div()
-                .flex_1()
-                .px_4()
-                .py_3()
                 .text_size(px(adsum_tokens::TEXT_BODY))
-                .text_color(adsum_tokens::text_primary())
+                .text_color(text_color)
                 .child(label),
+        )
+        .child(
+            div()
+                .mt_2()
+                .h(px(2.0))
+                .w(px(24.0))
+                .bg(underline),
         )
         .into_any_element()
 }
