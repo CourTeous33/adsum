@@ -28,7 +28,9 @@ dependencies = [
  "adsum-llm",
  "adsum-settings",
  "adsum-state",
+ "adsum-wiki",
  "async-channel 2.5.0",
+ "dirs 5.0.1",
  "env_logger",
  "gpui",
  "gpui_platform",
@@ -66,6 +68,7 @@ dependencies = [
  "adsum-settings",
  "adsum-state",
  "adsum-tokens",
+ "adsum-wiki",
  "gpui",
 ]
 

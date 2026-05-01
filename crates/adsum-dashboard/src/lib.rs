@@ -2,13 +2,16 @@
 
 mod conversations;
 mod settings;
+mod wikis;
 
 use adsum_llm::LlmService;
 use adsum_settings::{KeyStore, Settings};
+use adsum_wiki::WikiStore;
 pub use conversations::ConversationsView;
 use gpui::{div, prelude::*, px, AnyElement, Context, MouseButton, Render, Window};
 pub use settings::SettingsView;
-use std::sync::{Arc, RwLock};
+pub use wikis::WikisView;
+use std::sync::{Arc, Mutex, RwLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
@@ -20,6 +23,7 @@ pub enum Section {
 pub struct Dashboard {
     active_section: Section,
     pub(crate) conversations: ConversationsView,
+    pub(crate) wikis: WikisView,
     pub(crate) settings_view: SettingsView,
 }
 
@@ -28,6 +32,7 @@ impl Dashboard {
         settings: Arc<RwLock<Settings>>,
         keystore: Arc<dyn KeyStore>,
         _llm: Arc<LlmService>,
+        wiki: Arc<Mutex<WikiStore>>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -35,6 +40,7 @@ impl Dashboard {
         Self {
             active_section: Section::Conversations,
             conversations: ConversationsView::new(),
+            wikis: WikisView::new(wiki),
             settings_view,
         }
     }
@@ -115,7 +121,7 @@ impl Render for Dashboard {
         let nav = self.render_nav_rail(cx);
         let body = match self.active_section {
             Section::Conversations => self.conversations.render(cx),
-            Section::Wikis => placeholder_wikis_body(),
+            Section::Wikis => self.wikis.render(cx),
             Section::Settings => self.settings_view.render(cx),
         };
         div()
@@ -132,16 +138,3 @@ impl Render for Dashboard {
     }
 }
 
-fn placeholder_wikis_body() -> gpui::AnyElement {
-    div()
-        .flex_1()
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(
-            div()
-                .text_color(adsum_tokens::text_dim())
-                .child("Wikis (coming next task)"),
-        )
-        .into_any_element()
-}

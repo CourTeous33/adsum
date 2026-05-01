@@ -68,6 +68,7 @@ fn open_dashboard(
     settings: Arc<std::sync::RwLock<adsum_settings::Settings>>,
     keystore: Arc<dyn adsum_settings::KeyStore>,
     llm: Arc<adsum_llm::LlmService>,
+    wiki: Arc<Mutex<adsum_wiki::WikiStore>>,
     cx: &mut App,
 ) -> gpui::WindowHandle<Dashboard> {
     let dashboard_size = size(px(1024.0), px(720.0));
@@ -107,7 +108,8 @@ fn open_dashboard(
             let settings = settings.clone();
             let keystore = keystore.clone();
             let llm = llm.clone();
-            cx.new(|cx| Dashboard::new(settings, keystore, llm, window, cx))
+            let wiki = wiki.clone();
+            cx.new(|cx| Dashboard::new(settings, keystore, llm, wiki, window, cx))
         },
     )
     .unwrap()
@@ -194,6 +196,25 @@ fn run_example() {
         });
         let settings = Arc::new(std::sync::RwLock::new(initial_settings));
         let llm = Arc::new(adsum_llm::LlmService::spawn());
+        // Wiki store. Path resolution + bootstrap happens here. If the
+        // directory can't be created (no data_dir, permission denied), log,
+        // notify, and exit non-zero — same shape as KeyStore failures.
+        let wiki_root = match dirs::data_dir() {
+            Some(base) => base.join("Adsum").join("wiki"),
+            None => {
+                eprintln!("adsum-app: could not resolve data_dir for wiki");
+                show_hotkey_failure_notification("wiki initialization");
+                std::process::exit(1);
+            }
+        };
+        let wiki = match adsum_wiki::WikiStore::open(wiki_root) {
+            Ok(w) => Arc::new(Mutex::new(w)),
+            Err(err) => {
+                eprintln!("adsum-app: failed to open wiki: {err:#}");
+                show_hotkey_failure_notification("wiki initialization");
+                std::process::exit(1);
+            }
+        };
         let in_flight_slot: Arc<Mutex<Option<tokio_util::sync::CancellationToken>>> =
             Arc::new(Mutex::new(None));
         let chatbox_slot: Arc<Mutex<Option<gpui::WindowHandle<Chatbox>>>> =
@@ -362,6 +383,7 @@ fn run_example() {
         let settings_for_dashboard = settings.clone();
         let keystore_for_dashboard = keystore.clone();
         let llm_for_dashboard = llm.clone();
+        let wiki_for_dashboard = wiki.clone();
         cx.spawn(async move |async_cx| {
             while let Ok(()) = dashboard_summon_rx.recv().await {
                 let action = state_for_dashboard
@@ -373,6 +395,7 @@ fn run_example() {
                 let settings = settings_for_dashboard.clone();
                 let keystore = keystore_for_dashboard.clone();
                 let llm = llm_for_dashboard.clone();
+                let wiki = wiki_for_dashboard.clone();
                 async_cx.update(move |cx: &mut App| match action {
                     SummonAction::Open => {
                         let stale = slot.lock().unwrap().take();
@@ -381,8 +404,13 @@ fn run_example() {
                                 window.remove_window();
                             });
                         }
-                        let handle =
-                            open_dashboard(settings.clone(), keystore.clone(), llm.clone(), cx);
+                        let handle = open_dashboard(
+                            settings.clone(),
+                            keystore.clone(),
+                            llm.clone(),
+                            wiki.clone(),
+                            cx,
+                        );
                         *slot.lock().unwrap() = Some(handle);
                         state.lock().unwrap().set_dashboard_visible(true);
                     }
