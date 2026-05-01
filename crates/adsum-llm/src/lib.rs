@@ -254,4 +254,36 @@ mod tests {
         }
         assert!(rx.try_recv().is_err(), "no further chunks expected");
     }
+
+    #[test]
+    fn cancellation_during_handle_request_aborts_quickly() {
+        // We can't talk to a real provider in CI. Instead, drive
+        // handle_request through the no_key path and verify cancel
+        // ordering is a no-op on the synchronous error path.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (tx, rx) = async_channel::unbounded::<LlmChunk>();
+        let cancel = CancellationToken::new();
+        cancel.cancel(); // pre-cancelled
+
+        let req = LlmRequest {
+            messages: vec![],
+            model: ModelId {
+                provider: Provider::Anthropic,
+                name: "claude-sonnet-4-6".into(),
+            },
+            api_key: String::new(), // forces no_key short-circuit
+            system: SYSTEM_PROMPT,
+            chunks_tx: tx,
+            cancel,
+        };
+        rt.block_on(async {
+            handle_request(reqwest::Client::new(), req).await;
+        });
+        // Even pre-cancelled, the no_key path emits its error before checking cancel.
+        let chunk = rx.try_recv().expect("expected one chunk");
+        assert!(matches!(chunk, LlmChunk::Error { .. }));
+    }
 }
