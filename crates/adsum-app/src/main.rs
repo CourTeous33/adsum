@@ -180,6 +180,7 @@ fn run_example() {
         let chatbox_slot_close = chatbox_slot.clone();
         let conversation_slot_close = conversation_slot.clone();
         let dashboard_slot_close = dashboard_slot.clone();
+        let in_flight_close = in_flight_slot.clone();
         cx.on_window_closed(move |cx, closed_window_id| {
             // Was it the chatbox? Save session, clear slot, mark hidden,
             // cascade-close conversation.
@@ -189,6 +190,19 @@ fn run_example() {
                     .is_some_and(|h| h.window_id() == closed_window_id)
             }; // slot guard dropped here.
             if is_chatbox {
+                // Enforce: persisted turns are never InProgress.
+                {
+                    let tok = in_flight_close.lock().unwrap().take();
+                    if let Some(tok) = tok {
+                        tok.cancel();
+                    }
+                }
+                {
+                    let mut st = state_for_close.lock().unwrap();
+                    if st.is_streaming() {
+                        st.finalize_turn(adsum_state::TurnKind::Cancelled);
+                    }
+                }
                 let session = state_for_close.lock().unwrap().take_session();
                 if let Some(s) = session {
                     if !s.turns.is_empty() {
