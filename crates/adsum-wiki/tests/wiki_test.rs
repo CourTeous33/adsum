@@ -48,7 +48,9 @@ fn read_index_returns_bootstrap_placeholder_then_write_index_overwrites_it() {
     let placeholder = store.read_index().expect("read placeholder");
     assert!(placeholder.contains("Wiki Index"));
 
-    store.write_index("# Custom\n\nbody\n").expect("write index");
+    store
+        .write_index("# Custom\n\nbody\n")
+        .expect("write index");
     let after = store.read_index().expect("read after write");
     assert_eq!(after, "# Custom\n\nbody\n");
 }
@@ -61,8 +63,12 @@ fn append_log_accumulates_and_read_log_returns_full_content() {
 
     assert_eq!(store.read_log().expect("read empty"), "");
 
-    store.append_log("## [2026-05-01] ingest | one").expect("append 1");
-    store.append_log("## [2026-05-01] ingest | two").expect("append 2");
+    store
+        .append_log("## [2026-05-01] ingest | one")
+        .expect("append 1");
+    store
+        .append_log("## [2026-05-01] ingest | two")
+        .expect("append 2");
 
     let log = store.read_log().expect("read log");
     assert_eq!(
@@ -76,7 +82,9 @@ fn write_page_then_read_page_roundtrip() {
     let dir = tempdir().expect("tempdir");
     let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
 
-    store.write_page("font-kit-bug", "# notes\nbody\n").expect("write");
+    store
+        .write_page("font-kit-bug", "# notes\nbody\n")
+        .expect("write");
     let content = store.read_page("font-kit-bug").expect("read");
     assert_eq!(content, "# notes\nbody\n");
 }
@@ -97,14 +105,14 @@ fn write_page_rejects_invalid_slugs() {
     let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
 
     let bad = [
-        "",                 // empty
-        "Foo",              // uppercase
-        "foo bar",          // space
-        "foo.md",           // dot
-        "foo/bar",          // slash
-        "..",               // path traversal
-        "-leading-dash",    // leading dash
-        "foo_bar",          // underscore
+        "",              // empty
+        "Foo",           // uppercase
+        "foo bar",       // space
+        "foo.md",        // dot
+        "foo/bar",       // slash
+        "..",            // path traversal
+        "-leading-dash", // leading dash
+        "foo_bar",       // underscore
     ];
     for slug in bad {
         let result = store.write_page(slug, "x");

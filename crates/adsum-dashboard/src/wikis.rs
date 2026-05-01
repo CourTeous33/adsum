@@ -262,13 +262,7 @@ fn pinned_tab(
                 .text_color(text_color)
                 .child(label),
         )
-        .child(
-            div()
-                .mt_2()
-                .h(px(2.0))
-                .w(px(24.0))
-                .bg(underline),
-        )
+        .child(div().mt_2().h(px(2.0)).w(px(24.0)).bg(underline))
         .into_any_element()
 }
 

@@ -10,8 +10,8 @@ use adsum_wiki::WikiStore;
 pub use conversations::ConversationsView;
 use gpui::{div, prelude::*, px, svg, AnyElement, Context, MouseButton, Render, Window};
 pub use settings::SettingsView;
-pub use wikis::WikisView;
 use std::sync::{Arc, Mutex, RwLock};
+pub use wikis::WikisView;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
@@ -150,4 +150,3 @@ impl Render for Dashboard {
             .child(div().flex_1().min_w_0().child(body))
     }
 }
-
