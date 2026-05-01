@@ -29,11 +29,13 @@ dependencies = [
  "adsum-settings",
  "adsum-state",
  "adsum-wiki",
+ "anyhow",
  "async-channel 2.5.0",
  "dirs 5.0.1",
  "env_logger",
  "gpui",
  "gpui_platform",
+ "rust-embed",
  "tokio-util",
 ]
 

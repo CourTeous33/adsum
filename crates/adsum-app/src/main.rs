@@ -2,12 +2,37 @@ use adsum_chatbox::Chatbox;
 use adsum_conversation::Conversation;
 use adsum_dashboard::Dashboard;
 use adsum_state::{AppState, SummonAction};
+use anyhow::Context as _;
 use gpui::{
-    point, prelude::*, px, size, App, Bounds, Pixels, TitlebarOptions, WindowBackgroundAppearance,
-    WindowBounds, WindowKind, WindowOptions,
+    point, prelude::*, px, size, App, AssetSource, Bounds, Pixels, SharedString, TitlebarOptions,
+    WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions,
 };
 use gpui_platform::application;
+use rust_embed::RustEmbed;
+use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
+
+/// Embedded SVG assets (Lucide icons for the dashboard nav rail).
+/// Files live at `crates/adsum-app/icons/*.svg`; load via
+/// `svg().path("messages-square.svg")` from any view crate.
+#[derive(RustEmbed)]
+#[folder = "icons"]
+#[include = "*.svg"]
+struct Assets;
+
+impl AssetSource for Assets {
+    fn load(&self, path: &str) -> anyhow::Result<Option<Cow<'static, [u8]>>> {
+        Self::get(path)
+            .map(|f| Some(f.data))
+            .with_context(|| format!("loading asset at path {path:?}"))
+    }
+
+    fn list(&self, path: &str) -> anyhow::Result<Vec<SharedString>> {
+        Ok(Self::iter()
+            .filter_map(|p| p.starts_with(path).then(|| p.into()))
+            .collect())
+    }
+}
 
 fn show_hotkey_failure_notification(hotkey: &str) {
     let body = format!(
@@ -143,7 +168,7 @@ fn run_example() {
         let _ = exhausted_tx.send_blocking(());
     });
 
-    application().run(move |cx: &mut App| {
+    application().with_assets(Assets).run(move |cx: &mut App| {
         cx.activate(true);
 
         // Shared app state + three window slots.

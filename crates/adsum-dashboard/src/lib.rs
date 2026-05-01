@@ -8,7 +8,7 @@ use adsum_llm::LlmService;
 use adsum_settings::{KeyStore, Settings};
 use adsum_wiki::WikiStore;
 pub use conversations::ConversationsView;
-use gpui::{div, prelude::*, px, AnyElement, Context, MouseButton, Render, Window};
+use gpui::{div, prelude::*, px, svg, AnyElement, Context, MouseButton, Render, Window};
 pub use settings::SettingsView;
 pub use wikis::WikisView;
 use std::sync::{Arc, Mutex, RwLock};
@@ -61,7 +61,9 @@ impl Dashboard {
 
     fn render_nav_rail(&self, cx: &mut Context<Self>) -> AnyElement {
         let active = self.active_section;
-        let nav_button = |idx: usize, glyph: &'static str, target: Section| {
+        // Lucide SVG icons embedded via the `Assets` source registered in
+        // adsum-app. Paths resolve against `crates/adsum-app/icons/`.
+        let nav_button = |idx: usize, icon: &'static str, target: Section| {
             let is_active = active == target;
             let stripe = if is_active {
                 adsum_tokens::accent()
@@ -72,6 +74,11 @@ impl Dashboard {
                 adsum_tokens::bg_hover()
             } else {
                 adsum_tokens::bg_primary()
+            };
+            let icon_color = if is_active {
+                adsum_tokens::text_primary()
+            } else {
+                adsum_tokens::text_muted()
             };
             div()
                 .id(("nav-button", idx))
@@ -86,8 +93,6 @@ impl Dashboard {
                         .items_center()
                         .justify_center()
                         .bg(bg)
-                        .text_size(px(adsum_tokens::NAV_GLYPH_SIZE))
-                        .text_color(adsum_tokens::text_primary())
                         .hover(|s| s.bg(adsum_tokens::bg_hover()))
                         .cursor_pointer()
                         .on_mouse_down(
@@ -96,7 +101,12 @@ impl Dashboard {
                                 this.set_section(target, cx);
                             }),
                         )
-                        .child(glyph),
+                        .child(
+                            svg()
+                                .path(icon)
+                                .size(px(adsum_tokens::NAV_GLYPH_SIZE))
+                                .text_color(icon_color),
+                        ),
                 )
                 .into_any_element()
         };
@@ -112,9 +122,9 @@ impl Dashboard {
             .bg(adsum_tokens::bg_primary())
             .border_r_1()
             .border_color(adsum_tokens::border())
-            .child(nav_button(0, "▤", Section::Conversations))
-            .child(nav_button(1, "📖", Section::Wikis))
-            .child(nav_button(2, "⚙", Section::Settings))
+            .child(nav_button(0, "messages-square.svg", Section::Conversations))
+            .child(nav_button(1, "book-open.svg", Section::Wikis))
+            .child(nav_button(2, "settings.svg", Section::Settings))
             .into_any_element()
     }
 }

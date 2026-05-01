@@ -20,3 +20,5 @@ adsum-settings = { path = "../adsum-settings" }
 adsum-wiki     = { path = "../adsum-wiki" }
 dirs           = { workspace = true }
 tokio-util     = { workspace = true }
+rust-embed     = { workspace = true }
+anyhow         = { workspace = true }
