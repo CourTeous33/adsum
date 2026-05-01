@@ -1,16 +1,25 @@
 use adsum_state::persistence::{
     load_all_sessions_from, load_session_from, save_session_to, SessionSummary,
 };
-use adsum_state::{Session, Turn};
+use adsum_state::{ModelId, Provider, Session, Turn, TurnKind};
 use std::time::{Duration, SystemTime};
 use tempfile::tempdir;
+
+fn test_model() -> ModelId {
+    ModelId {
+        provider: Provider::Anthropic,
+        name: "claude-sonnet-4-6".into(),
+    }
+}
 
 fn fixed_session(id: &str, turn_count: usize, t: u64) -> Session {
     let created = SystemTime::UNIX_EPOCH + Duration::from_secs(t);
     let turns = (0..turn_count)
         .map(|i| Turn {
             user_text: format!("query {i}"),
-            response: format!("echo: query {i}"),
+            assistant_text: format!("echo: query {i}"),
+            kind: TurnKind::Ok,
+            model: test_model(),
             timestamp: created + Duration::from_secs(i as u64),
         })
         .collect();

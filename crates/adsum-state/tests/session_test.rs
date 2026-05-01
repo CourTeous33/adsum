@@ -1,5 +1,12 @@
-use adsum_state::{Session, Turn};
+use adsum_state::{ModelId, Provider, Session, Turn, TurnKind};
 use std::time::SystemTime;
+
+fn test_model() -> ModelId {
+    ModelId {
+        provider: Provider::Anthropic,
+        name: "claude-sonnet-4-6".into(),
+    }
+}
 
 #[test]
 fn session_roundtrips_through_json() {
@@ -9,12 +16,16 @@ fn session_roundtrips_through_json() {
         turns: vec![
             Turn {
                 user_text: "hello".to_string(),
-                response: "echo: hello".to_string(),
+                assistant_text: "echo: hello".to_string(),
+                kind: TurnKind::Ok,
+                model: test_model(),
                 timestamp: SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_001),
             },
             Turn {
                 user_text: "how are you".to_string(),
-                response: "echo: how are you".to_string(),
+                assistant_text: "echo: how are you".to_string(),
+                kind: TurnKind::Ok,
+                model: test_model(),
                 timestamp: SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_002),
             },
         ],
