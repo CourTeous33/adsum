@@ -69,7 +69,54 @@ impl WikisView {
     }
 
     fn render_sidebar(&self, cx: &mut Context<crate::Dashboard>) -> AnyElement {
-        let mut sidebar = div()
+        // Two-region sidebar:
+        //   1. Fixed top — Wiki heading + index + log. Doesn't scroll.
+        //   2. Scrollable bottom — pages list. flex_1 so it claims the
+        //      remaining vertical space.
+        // The bottom border on the top region is the visual separator
+        // between pinned and scrollable content (no free-floating divider).
+        let top = div()
+            .flex()
+            .flex_col()
+            .flex_shrink_0()
+            .border_b_1()
+            .border_color(adsum_tokens::border())
+            .child(
+                div()
+                    .px_4()
+                    .py_4()
+                    .text_size(px(adsum_tokens::TEXT_HEADING))
+                    .text_color(adsum_tokens::text_primary())
+                    .child("Wiki"),
+            )
+            .child(pinned_row(
+                cx,
+                0,
+                "index",
+                Selection::Index,
+                self.selection == Selection::Index,
+            ))
+            .child(pinned_row(
+                cx,
+                1,
+                "log",
+                Selection::Log,
+                self.selection == Selection::Log,
+            ));
+
+        let mut pages_list = div()
+            .id("wikis-pages")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll();
+        for (idx, page) in self.pages.iter().enumerate() {
+            let is_selected = matches!(&self.selection, Selection::Page(s) if s == &page.slug);
+            pages_list = pages_list.child(page_row(cx, idx, &page.slug, is_selected));
+        }
+
+        div()
             .id("wikis-sidebar")
             .flex()
             .flex_col()
@@ -79,45 +126,9 @@ impl WikisView {
             .bg(adsum_tokens::bg_primary())
             .border_r_1()
             .border_color(adsum_tokens::border())
-            .overflow_y_scroll()
-            .child(
-                div()
-                    .px_4()
-                    .py_4()
-                    .text_size(px(adsum_tokens::TEXT_HEADING))
-                    .text_color(adsum_tokens::text_primary())
-                    .child("Wiki"),
-            );
-
-        sidebar = sidebar.child(pinned_row(
-            cx,
-            0,
-            "index",
-            Selection::Index,
-            self.selection == Selection::Index,
-        ));
-        sidebar = sidebar.child(pinned_row(
-            cx,
-            1,
-            "log",
-            Selection::Log,
-            self.selection == Selection::Log,
-        ));
-
-        sidebar = sidebar.child(
-            div()
-                .h(px(1.0))
-                .my_2()
-                .mx_4()
-                .bg(adsum_tokens::border()),
-        );
-
-        for (idx, page) in self.pages.iter().enumerate() {
-            let is_selected = matches!(&self.selection, Selection::Page(s) if s == &page.slug);
-            sidebar = sidebar.child(page_row(cx, idx, &page.slug, is_selected));
-        }
-
-        sidebar.into_any_element()
+            .child(top)
+            .child(pages_list)
+            .into_any_element()
     }
 
     fn render_detail(&self) -> AnyElement {
