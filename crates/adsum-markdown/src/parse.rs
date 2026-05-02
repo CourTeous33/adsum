@@ -75,9 +75,12 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
             }
             Event::End(TagEnd::Paragraph) => {
                 if in_paragraph {
-                    push_block(&mut stack, Block::Paragraph {
-                        runs: std::mem::take(&mut current_runs),
-                    });
+                    push_block(
+                        &mut stack,
+                        Block::Paragraph {
+                            runs: std::mem::take(&mut current_runs),
+                        },
+                    );
                     in_paragraph = false;
                 }
             }
@@ -87,10 +90,13 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
             }
             Event::End(TagEnd::Heading(_)) => {
                 if let Some(level) = in_heading.take() {
-                    push_block(&mut stack, Block::Heading {
-                        level,
-                        runs: std::mem::take(&mut current_runs),
-                    });
+                    push_block(
+                        &mut stack,
+                        Block::Heading {
+                            level,
+                            runs: std::mem::take(&mut current_runs),
+                        },
+                    );
                 }
             }
             Event::Start(Tag::Strong) => s.bold += 1,
@@ -98,7 +104,9 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
             Event::Start(Tag::Emphasis) => s.italic += 1,
             Event::End(TagEnd::Emphasis) => s.italic = s.italic.saturating_sub(1),
             Event::Start(Tag::Strikethrough) => s.strikethrough += 1,
-            Event::End(TagEnd::Strikethrough) => s.strikethrough = s.strikethrough.saturating_sub(1),
+            Event::End(TagEnd::Strikethrough) => {
+                s.strikethrough = s.strikethrough.saturating_sub(1)
+            }
             Event::Start(Tag::Link { dest_url, .. }) => {
                 s.in_link = Some(String::new());
                 s.link_url = Some(dest_url.into_string());
