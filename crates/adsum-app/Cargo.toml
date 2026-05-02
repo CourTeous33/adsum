@@ -22,3 +22,4 @@ dirs           = { workspace = true }
 tokio-util     = { workspace = true }
 rust-embed     = { workspace = true }
 anyhow         = { workspace = true }
+reqwest_client = { workspace = true }

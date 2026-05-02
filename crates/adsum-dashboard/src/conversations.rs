@@ -235,7 +235,10 @@ impl ConversationsView {
                         }
                     };
 
-                    let assistant_row = div().w_full().text_color(text_color).child(body_text);
+                    let assistant_row = div()
+                        .w_full()
+                        .text_color(text_color)
+                        .child(adsum_markdown::Renderer::new().render(&body_text));
 
                     transcript = transcript.child(user_row).child(assistant_row);
                 }

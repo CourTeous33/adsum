@@ -173,7 +173,13 @@ fn run_example() {
         let _ = exhausted_tx.send_blocking(());
     });
 
-    application().with_assets(Assets).run(move |cx: &mut App| {
+    let http_client = Arc::new(
+        reqwest_client::ReqwestClient::user_agent("Adsum/0.1").expect("build reqwest client"),
+    );
+    application()
+        .with_assets(Assets)
+        .with_http_client(http_client)
+        .run(move |cx: &mut App| {
         cx.activate(true);
 
         // Shared app state + three window slots.

@@ -9,3 +9,4 @@ publish.workspace = true
 adsum-state = { path = "../adsum-state" }
 adsum-tokens = { path = "../adsum-tokens" }
 gpui = { workspace = true }
+adsum-markdown = { path = "../adsum-markdown" }

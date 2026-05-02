@@ -70,10 +70,7 @@ impl Render for Conversation {
             // Assistant: plain text, full width (no bubble).
             let (text_color, body_text) = match &turn.kind {
                 TurnKind::Ok => (adsum_tokens::text_primary(), turn.assistant_text.clone()),
-                TurnKind::InProgress => (
-                    adsum_tokens::text_primary(),
-                    format!("{}▌", turn.assistant_text),
-                ),
+                TurnKind::InProgress => (adsum_tokens::text_primary(), turn.assistant_text.clone()),
                 TurnKind::Cancelled if turn.assistant_text.is_empty() => {
                     (adsum_tokens::text_dim(), "(cancelled)".into())
                 }
@@ -86,7 +83,12 @@ impl Render for Conversation {
                 }
             };
 
-            let assistant_row = div().w_full().text_color(text_color).child(body_text);
+            let renderer = adsum_markdown::Renderer::new()
+                .with_streaming_cursor(matches!(turn.kind, TurnKind::InProgress));
+            let assistant_row = div()
+                .w_full()
+                .text_color(text_color)
+                .child(renderer.render(&body_text));
 
             transcript = transcript.child(user_row).child(assistant_row);
         }
