@@ -3,9 +3,17 @@
 
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
-fn preprocess_emoji(input: &str) -> String {
-    let r = gh_emoji::Replacer::new();
-    r.replace_all(input).into_owned()
+fn replacer() -> &'static gh_emoji::Replacer {
+    static R: std::sync::OnceLock<gh_emoji::Replacer> = std::sync::OnceLock::new();
+    R.get_or_init(gh_emoji::Replacer::new)
+}
+
+/// Substitute `:emoji:` shortcodes with their codepoint equivalents.
+/// Returns `Cow::Borrowed` on no-match (the common streaming case) so the
+/// hot path is allocation-free. See `syntax::syntax_set` for the same
+/// `OnceLock` caching pattern.
+fn preprocess_emoji(input: &str) -> std::borrow::Cow<'_, str> {
+    replacer().replace_all(input)
 }
 
 #[derive(Debug, Clone, PartialEq)]
