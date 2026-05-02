@@ -194,3 +194,40 @@ fn nested_list_outer_item_has_text_paragraph_before_nested_list() {
     };
     assert_eq!(inner_items.len(), 2, "nested list should have two items");
 }
+
+#[test]
+fn fenced_code_block_with_lang_extracts_lang_string_and_content() {
+    let blocks = parse_for_test("```rust\nfn foo() {}\n```");
+    assert_eq!(blocks.len(), 1);
+    let Block::CodeBlock {
+        lang,
+        content,
+        highlights,
+    } = &blocks[0]
+    else {
+        panic!("expected code block, got {blocks:?}");
+    };
+    assert_eq!(lang.as_deref(), Some("rust"));
+    assert_eq!(content, "fn foo() {}\n");
+    assert!(highlights.is_empty(), "no syntect yet");
+}
+
+#[test]
+fn fenced_code_block_without_lang_has_none_lang() {
+    let blocks = parse_for_test("```\nplain code\n```");
+    let Block::CodeBlock { lang, .. } = &blocks[0] else {
+        panic!()
+    };
+    assert_eq!(*lang, None);
+}
+
+#[test]
+fn unclosed_fenced_code_block_still_emits_code_block_with_partial_content() {
+    // pulldown-cmark treats unclosed fences as code blocks ending at EOF.
+    let blocks = parse_for_test("```rust\nfn foo() {");
+    let Block::CodeBlock { lang, content, .. } = &blocks[0] else {
+        panic!("expected code block for unclosed fence, got {blocks:?}");
+    };
+    assert_eq!(lang.as_deref(), Some("rust"));
+    assert!(content.contains("fn foo() {"));
+}

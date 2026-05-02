@@ -5,10 +5,36 @@ use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
-    Paragraph { runs: Vec<Run> },
-    Heading { level: u8, runs: Vec<Run> },
-    UnorderedList { items: Vec<Vec<Block>> },
-    OrderedList { start: u64, items: Vec<Vec<Block>> },
+    Paragraph {
+        runs: Vec<Run>,
+    },
+    Heading {
+        level: u8,
+        runs: Vec<Run>,
+    },
+    UnorderedList {
+        items: Vec<Vec<Block>>,
+    },
+    OrderedList {
+        start: u64,
+        items: Vec<Vec<Block>>,
+    },
+    CodeBlock {
+        lang: Option<String>,
+        content: String,
+        highlights: Vec<HighlightSpan>,
+    },
+}
+
+/// One highlighted span inside a code block. Byte range into `content`,
+/// plus a foreground color and font style. Populated by syntect in Task 10;
+/// empty for now.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HighlightSpan {
+    pub range: std::ops::Range<usize>,
+    pub fg_rgb: u32,
+    pub bold: bool,
+    pub italic: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -94,6 +120,8 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
     let mut current_runs: Vec<Run> = Vec::new();
     let mut in_paragraph = false;
     let mut in_heading: Option<u8> = None;
+    let mut code_block_lang: Option<Option<String>> = None; // outer Some = in code block; inner Option<String> = lang
+    let mut code_block_buf = String::new();
     let mut s = InlineState::default();
 
     for event in parser {
@@ -182,6 +210,38 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
                         _ => {}
                     }
                 }
+            }
+            Event::Start(Tag::CodeBlock(kind)) => {
+                use pulldown_cmark::CodeBlockKind;
+                let lang = match kind {
+                    CodeBlockKind::Fenced(info) => {
+                        let s = info.into_string();
+                        let l = s.split_whitespace().next().unwrap_or("").to_string();
+                        if l.is_empty() {
+                            None
+                        } else {
+                            Some(l)
+                        }
+                    }
+                    CodeBlockKind::Indented => None,
+                };
+                code_block_lang = Some(lang);
+                code_block_buf.clear();
+            }
+            Event::End(TagEnd::CodeBlock) => {
+                if let Some(lang) = code_block_lang.take() {
+                    push_block(
+                        &mut stack,
+                        Block::CodeBlock {
+                            lang,
+                            content: std::mem::take(&mut code_block_buf),
+                            highlights: Vec::new(),
+                        },
+                    );
+                }
+            }
+            Event::Text(t) if code_block_lang.is_some() => {
+                code_block_buf.push_str(&t);
             }
             Event::Text(t) if in_paragraph || in_heading.is_some() || top_is_list_item(&stack) => {
                 if let Some(buf) = s.in_link.as_mut() {
