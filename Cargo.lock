@@ -28,10 +28,14 @@ dependencies = [
  "adsum-llm",
  "adsum-settings",
  "adsum-state",
+ "adsum-wiki",
+ "anyhow",
  "async-channel 2.5.0",
+ "dirs 5.0.1",
  "env_logger",
  "gpui",
  "gpui_platform",
+ "rust-embed",
  "tokio-util",
 ]
 
@@ -66,6 +70,7 @@ dependencies = [
  "adsum-settings",
  "adsum-state",
  "adsum-tokens",
+ "adsum-wiki",
  "gpui",
 ]
 
@@ -123,6 +128,14 @@ name = "adsum-tokens"
 version = "0.1.0"
 dependencies = [
  "gpui",
+]
+
+[[package]]
+name = "adsum-wiki"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

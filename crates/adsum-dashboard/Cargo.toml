@@ -10,4 +10,5 @@ adsum-state = { path = "../adsum-state" }
 adsum-tokens = { path = "../adsum-tokens" }
 adsum-llm      = { path = "../adsum-llm" }
 adsum-settings = { path = "../adsum-settings" }
+adsum-wiki     = { path = "../adsum-wiki" }
 gpui = { workspace = true }

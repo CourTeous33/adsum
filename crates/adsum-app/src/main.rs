@@ -2,21 +2,51 @@ use adsum_chatbox::Chatbox;
 use adsum_conversation::Conversation;
 use adsum_dashboard::Dashboard;
 use adsum_state::{AppState, SummonAction};
+use anyhow::Context as _;
 use gpui::{
-    point, prelude::*, px, size, App, Bounds, Pixels, TitlebarOptions, WindowBackgroundAppearance,
-    WindowBounds, WindowKind, WindowOptions,
+    point, prelude::*, px, size, App, AssetSource, Bounds, Pixels, SharedString, TitlebarOptions,
+    WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions,
 };
 use gpui_platform::application;
+use rust_embed::RustEmbed;
+use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 
-fn show_hotkey_failure_notification(hotkey: &str) {
-    let body = format!(
-        "Adsum couldn't register the global hotkey {hotkey}. Check Accessibility permissions in System Settings.",
-    );
+/// Embedded SVG assets (Lucide icons for the dashboard nav rail).
+/// Files live at `crates/adsum-app/icons/*.svg`; load via
+/// `svg().path("messages-square.svg")` from any view crate.
+#[derive(RustEmbed)]
+#[folder = "icons"]
+#[include = "*.svg"]
+struct Assets;
+
+impl AssetSource for Assets {
+    fn load(&self, path: &str) -> anyhow::Result<Option<Cow<'static, [u8]>>> {
+        Self::get(path)
+            .map(|f| Some(f.data))
+            .with_context(|| format!("loading asset at path {path:?}"))
+    }
+
+    fn list(&self, path: &str) -> anyhow::Result<Vec<SharedString>> {
+        Ok(Self::iter()
+            .filter_map(|p| p.starts_with(path).then(|| p.into()))
+            .collect())
+    }
+}
+
+/// Show a macOS notification with an arbitrary body. Best-effort: silently
+/// drops on osascript failure (the user already has stderr).
+fn show_notification(body: &str) {
     let osa = format!("display notification \"{body}\" with title \"Adsum\"");
     let _ = std::process::Command::new("osascript")
         .args(["-e", &osa])
         .status();
+}
+
+fn show_hotkey_failure_notification(hotkey: &str) {
+    show_notification(&format!(
+        "Adsum couldn't register the global hotkey {hotkey}. Check Accessibility permissions in System Settings."
+    ));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -68,6 +98,7 @@ fn open_dashboard(
     settings: Arc<std::sync::RwLock<adsum_settings::Settings>>,
     keystore: Arc<dyn adsum_settings::KeyStore>,
     llm: Arc<adsum_llm::LlmService>,
+    wiki: Arc<Mutex<adsum_wiki::WikiStore>>,
     cx: &mut App,
 ) -> gpui::WindowHandle<Dashboard> {
     let dashboard_size = size(px(1024.0), px(720.0));
@@ -107,7 +138,8 @@ fn open_dashboard(
             let settings = settings.clone();
             let keystore = keystore.clone();
             let llm = llm.clone();
-            cx.new(|cx| Dashboard::new(settings, keystore, llm, window, cx))
+            let wiki = wiki.clone();
+            cx.new(|cx| Dashboard::new(settings, keystore, llm, wiki, window, cx))
         },
     )
     .unwrap()
@@ -141,7 +173,7 @@ fn run_example() {
         let _ = exhausted_tx.send_blocking(());
     });
 
-    application().run(move |cx: &mut App| {
+    application().with_assets(Assets).run(move |cx: &mut App| {
         cx.activate(true);
 
         // Shared app state + three window slots.
@@ -194,6 +226,32 @@ fn run_example() {
         });
         let settings = Arc::new(std::sync::RwLock::new(initial_settings));
         let llm = Arc::new(adsum_llm::LlmService::spawn());
+        // Wiki store. Path resolution + bootstrap happens here. Bootstrap
+        // failures are fatal: without a wiki root the dashboard's Wikis
+        // section has nothing to render, so log + notify + exit non-zero
+        // rather than launch into a broken UI. (KeyStore by contrast can
+        // fall back to a temp-dir file store, but a missing wiki dir has no
+        // analogous degradation path that's still useful.)
+        let wiki_root = match dirs::data_dir() {
+            Some(base) => base.join("Adsum").join("wiki"),
+            None => {
+                eprintln!("adsum-app: could not resolve data_dir for wiki");
+                show_notification(
+                    "Adsum couldn't locate a data directory for the wiki store. Check that ~/Library/Application Support is accessible.",
+                );
+                std::process::exit(1);
+            }
+        };
+        let wiki = match adsum_wiki::WikiStore::open(wiki_root) {
+            Ok(w) => Arc::new(Mutex::new(w)),
+            Err(err) => {
+                eprintln!("adsum-app: failed to open wiki: {err:#}");
+                show_notification(
+                    "Adsum couldn't initialize the wiki store at ~/Library/Application Support/Adsum/wiki/. Check disk permissions.",
+                );
+                std::process::exit(1);
+            }
+        };
         let in_flight_slot: Arc<Mutex<Option<tokio_util::sync::CancellationToken>>> =
             Arc::new(Mutex::new(None));
         let chatbox_slot: Arc<Mutex<Option<gpui::WindowHandle<Chatbox>>>> =
@@ -362,6 +420,7 @@ fn run_example() {
         let settings_for_dashboard = settings.clone();
         let keystore_for_dashboard = keystore.clone();
         let llm_for_dashboard = llm.clone();
+        let wiki_for_dashboard = wiki.clone();
         cx.spawn(async move |async_cx| {
             while let Ok(()) = dashboard_summon_rx.recv().await {
                 let action = state_for_dashboard
@@ -373,6 +432,7 @@ fn run_example() {
                 let settings = settings_for_dashboard.clone();
                 let keystore = keystore_for_dashboard.clone();
                 let llm = llm_for_dashboard.clone();
+                let wiki = wiki_for_dashboard.clone();
                 async_cx.update(move |cx: &mut App| match action {
                     SummonAction::Open => {
                         let stale = slot.lock().unwrap().take();
@@ -381,8 +441,13 @@ fn run_example() {
                                 window.remove_window();
                             });
                         }
-                        let handle =
-                            open_dashboard(settings.clone(), keystore.clone(), llm.clone(), cx);
+                        let handle = open_dashboard(
+                            settings.clone(),
+                            keystore.clone(),
+                            llm.clone(),
+                            wiki.clone(),
+                            cx,
+                        );
                         *slot.lock().unwrap() = Some(handle);
                         state.lock().unwrap().set_dashboard_visible(true);
                     }
