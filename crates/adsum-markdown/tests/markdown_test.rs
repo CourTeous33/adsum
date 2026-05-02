@@ -374,3 +374,23 @@ fn unknown_lang_code_block_has_empty_highlights() {
         "unknown language should produce no highlights"
     );
 }
+
+#[test]
+fn smile_shortcode_substitutes_to_emoji_codepoint() {
+    let blocks = parse_for_test("hello :smile: world");
+    let Block::Paragraph { runs } = &blocks[0] else {
+        panic!()
+    };
+    let combined: String = runs
+        .iter()
+        .filter_map(|r| match r {
+            Run::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(combined.contains("😄"), "expected 😄 in {combined:?}");
+    assert!(
+        !combined.contains(":smile:"),
+        "shortcode should be replaced"
+    );
+}

@@ -3,6 +3,11 @@
 
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
+fn preprocess_emoji(input: &str) -> String {
+    let r = gh_emoji::Replacer::new();
+    r.replace_all(input).into_owned()
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
     Paragraph {
@@ -132,12 +137,13 @@ fn flush_list_item_runs(stack: &mut [Frame], current_runs: &mut Vec<Run>) {
 }
 
 pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
+    let text = preprocess_emoji(text);
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TABLES);
     opts.insert(Options::ENABLE_FOOTNOTES);
 
-    let parser = Parser::new_ext(text, opts);
+    let parser = Parser::new_ext(&text, opts);
     let mut stack: Vec<Frame> = vec![Frame::Root(Vec::new())];
     let mut current_runs: Vec<Run> = Vec::new();
     let mut in_paragraph = false;
