@@ -1,9 +1,3 @@
-// `Block` currently has only the `Paragraph` variant, so destructuring it via
-// `let Block::Paragraph { .. } = ...` is irrefutable today. The tests below keep
-// the `else { panic!() }` arms so they remain correct once more `Block` variants
-// are added in later tasks; suppress the lint for now.
-#![allow(irrefutable_let_patterns)]
-
 use adsum_markdown::parse_for_test;
 use adsum_markdown::testing::{Block, Run};
 

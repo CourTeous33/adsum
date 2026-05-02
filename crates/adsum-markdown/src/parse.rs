@@ -28,11 +28,30 @@ pub enum Run {
 
 #[derive(Default)]
 struct InlineState {
+    // Saturating counters defend against malformed end events. pulldown-cmark
+    // guarantees Start/End pairing, but a streaming-render path that crashes
+    // on a stray end is a worse failure mode than a slightly-wrongly-styled
+    // paragraph.
     bold: u32,
     italic: u32,
     strikethrough: u32,
-    in_link: Option<String>, // accumulating link text; url stored separately
+    in_link: Option<String>,
     link_url: Option<String>,
+}
+
+/// One frame on the block-construction stack. The root frame's `Vec<Block>`
+/// is the eventual return value of `parse_blocks`. v1 only uses the `Root`
+/// variant; Task 5b adds `UnorderedList`/`OrderedList`/`ListItem` frames so
+/// nested-block structures (lists of paragraphs, lists of lists, etc.) can
+/// accumulate into the right parent.
+enum Frame {
+    Root(Vec<Block>),
+}
+
+fn push_block(stack: &mut [Frame], block: Block) {
+    match stack.last_mut().unwrap() {
+        Frame::Root(blocks) => blocks.push(block),
+    }
 }
 
 pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
@@ -42,7 +61,7 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
     opts.insert(Options::ENABLE_FOOTNOTES);
 
     let parser = Parser::new_ext(text, opts);
-    let mut blocks = Vec::new();
+    let mut stack: Vec<Frame> = vec![Frame::Root(Vec::new())];
     let mut current_runs: Vec<Run> = Vec::new();
     let mut in_paragraph = false;
     let mut in_heading: Option<u8> = None;
@@ -56,10 +75,22 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
             }
             Event::End(TagEnd::Paragraph) => {
                 if in_paragraph {
-                    blocks.push(Block::Paragraph {
+                    push_block(&mut stack, Block::Paragraph {
                         runs: std::mem::take(&mut current_runs),
                     });
                     in_paragraph = false;
+                }
+            }
+            Event::Start(Tag::Heading { level, .. }) => {
+                in_heading = Some(level as u8);
+                current_runs.clear();
+            }
+            Event::End(TagEnd::Heading(_)) => {
+                if let Some(level) = in_heading.take() {
+                    push_block(&mut stack, Block::Heading {
+                        level,
+                        runs: std::mem::take(&mut current_runs),
+                    });
                 }
             }
             Event::Start(Tag::Strong) => s.bold += 1,
@@ -79,18 +110,6 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
                     }
                 }
             }
-            Event::Start(Tag::Heading { level, .. }) => {
-                in_heading = Some(level as u8);
-                current_runs.clear();
-            }
-            Event::End(TagEnd::Heading(_)) => {
-                if let Some(level) = in_heading.take() {
-                    blocks.push(Block::Heading {
-                        level,
-                        runs: std::mem::take(&mut current_runs),
-                    });
-                }
-            }
             Event::Text(t) if in_paragraph || in_heading.is_some() => {
                 if let Some(buf) = s.in_link.as_mut() {
                     buf.push_str(&t);
@@ -108,7 +127,6 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
                     code: c.into_string(),
                 });
             }
-            // Hard break: spec says "Inserted into StyledText as \n."
             Event::HardBreak if in_paragraph || in_heading.is_some() => {
                 current_runs.push(Run::Text {
                     text: "\n".into(),
@@ -117,7 +135,6 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
                     strikethrough: s.strikethrough > 0,
                 });
             }
-            // Soft break: CommonMark default is single space.
             Event::SoftBreak if in_paragraph || in_heading.is_some() => {
                 current_runs.push(Run::Text {
                     text: " ".into(),
@@ -129,5 +146,11 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
             _ => {}
         }
     }
+
+    // Pop the root frame to recover the accumulated block list. If the parser
+    // left additional frames on the stack (malformed input), discard them —
+    // graceful degradation matters more than panicking on weird mid-stream
+    // input.
+    let Frame::Root(blocks) = stack.into_iter().next().unwrap();
     blocks
 }
