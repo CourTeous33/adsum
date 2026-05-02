@@ -7,6 +7,7 @@ members = [
     "crates/adsum-dashboard",
     "crates/adsum-hotkey",
     "crates/adsum-llm",
+    "crates/adsum-markdown",
     "crates/adsum-settings",
     "crates/adsum-state",
     "crates/adsum-tokens",
@@ -35,6 +36,10 @@ dirs = "5"
 thiserror = "1"
 tempfile = "3"
 rust-embed = "8"
+pulldown-cmark = "0.10"
+syntect        = "5"
+gh-emoji       = "1"
+reqwest_client = { git = "https://github.com/zed-industries/zed", rev = "3014170d7e4dfbe8379beda4dec92d6256b41209" }
 tokio              = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 reqwest            = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
 futures-util       = "0.3"
