@@ -136,3 +136,61 @@ fn nested_list_contains_inner_list_block_inside_outer_item() {
         .iter()
         .any(|b| matches!(b, Block::UnorderedList { .. })));
 }
+
+#[test]
+fn tight_unordered_list_items_contain_text_paragraphs() {
+    let blocks = parse_for_test("- one\n- two\n- three");
+    let Block::UnorderedList { items } = &blocks[0] else {
+        panic!()
+    };
+    assert_eq!(items.len(), 3);
+
+    // Each item should contain a single Block::Paragraph carrying the item text.
+    for (idx, expected) in ["one", "two", "three"].iter().enumerate() {
+        assert_eq!(items[idx].len(), 1, "item {idx} should have one block");
+        let Block::Paragraph { runs } = &items[idx][0] else {
+            panic!("item {idx} block was not Paragraph: {:?}", items[idx][0]);
+        };
+        let combined: String = runs
+            .iter()
+            .filter_map(|r| match r {
+                Run::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(combined, *expected);
+    }
+}
+
+#[test]
+fn nested_list_outer_item_has_text_paragraph_before_nested_list() {
+    let blocks = parse_for_test("- outer\n  - inner-a\n  - inner-b");
+    let Block::UnorderedList { items } = &blocks[0] else {
+        panic!()
+    };
+    assert_eq!(items.len(), 1);
+    let outer_item = &items[0];
+
+    // Outer item should contain TWO blocks in order: Paragraph("outer") then nested UnorderedList.
+    assert_eq!(
+        outer_item.len(),
+        2,
+        "outer item should have paragraph + nested list"
+    );
+    let Block::Paragraph { runs } = &outer_item[0] else {
+        panic!("first block was not Paragraph: {:?}", outer_item[0]);
+    };
+    let combined: String = runs
+        .iter()
+        .filter_map(|r| match r {
+            Run::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(combined, "outer");
+
+    let Block::UnorderedList { items: inner_items } = &outer_item[1] else {
+        panic!("second block was not UnorderedList: {:?}", outer_item[1]);
+    };
+    assert_eq!(inner_items.len(), 2, "nested list should have two items");
+}

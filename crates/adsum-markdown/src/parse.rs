@@ -63,6 +63,26 @@ fn push_block(stack: &mut [Frame], block: Block) {
     }
 }
 
+fn top_is_list_item(stack: &[Frame]) -> bool {
+    matches!(stack.last(), Some(Frame::ListItem { .. }))
+}
+
+/// If we're inside a list item AND have accumulated bare inline runs, flush
+/// them as a synthetic `Block::Paragraph`. Tight-list items emit bare
+/// `Event::Text` without a wrapping `Tag::Paragraph`; this helper turns those
+/// runs into a Paragraph at block-emission boundaries (Start of nested block,
+/// End of Item).
+fn flush_list_item_runs(stack: &mut [Frame], current_runs: &mut Vec<Run>) {
+    if top_is_list_item(stack) && !current_runs.is_empty() {
+        push_block(
+            stack,
+            Block::Paragraph {
+                runs: std::mem::take(current_runs),
+            },
+        );
+    }
+}
+
 pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_STRIKETHROUGH);
@@ -122,12 +142,13 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
             }
             Event::End(TagEnd::Link) => {
                 if let (Some(text), Some(url)) = (s.in_link.take(), s.link_url.take()) {
-                    if in_paragraph || in_heading.is_some() {
+                    if in_paragraph || in_heading.is_some() || top_is_list_item(&stack) {
                         current_runs.push(Run::Link { text, url });
                     }
                 }
             }
             Event::Start(Tag::List(start)) => {
+                flush_list_item_runs(&mut stack, &mut current_runs);
                 stack.push(match start {
                     Some(n) => Frame::OrderedList {
                         start: n,
@@ -151,6 +172,7 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
                 });
             }
             Event::End(TagEnd::Item) => {
+                flush_list_item_runs(&mut stack, &mut current_runs);
                 let frame = stack.pop().unwrap();
                 if let Frame::ListItem { children } = frame {
                     match stack.last_mut().unwrap() {
@@ -161,7 +183,7 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
                     }
                 }
             }
-            Event::Text(t) if in_paragraph || in_heading.is_some() => {
+            Event::Text(t) if in_paragraph || in_heading.is_some() || top_is_list_item(&stack) => {
                 if let Some(buf) = s.in_link.as_mut() {
                     buf.push_str(&t);
                 } else {
@@ -173,12 +195,14 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
                     });
                 }
             }
-            Event::Code(c) if in_paragraph || in_heading.is_some() => {
+            Event::Code(c) if in_paragraph || in_heading.is_some() || top_is_list_item(&stack) => {
                 current_runs.push(Run::Code {
                     code: c.into_string(),
                 });
             }
-            Event::HardBreak if in_paragraph || in_heading.is_some() => {
+            Event::HardBreak
+                if in_paragraph || in_heading.is_some() || top_is_list_item(&stack) =>
+            {
                 current_runs.push(Run::Text {
                     text: "\n".into(),
                     bold: s.bold > 0,
@@ -186,7 +210,9 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
                     strikethrough: s.strikethrough > 0,
                 });
             }
-            Event::SoftBreak if in_paragraph || in_heading.is_some() => {
+            Event::SoftBreak
+                if in_paragraph || in_heading.is_some() || top_is_list_item(&stack) =>
+            {
                 current_runs.push(Run::Text {
                     text: " ".into(),
                     bold: s.bold > 0,
