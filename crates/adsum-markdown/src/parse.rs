@@ -161,12 +161,18 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
             }
             Event::End(TagEnd::Paragraph) => {
                 if in_paragraph {
-                    push_block(
-                        &mut stack,
-                        Block::Paragraph {
-                            runs: std::mem::take(&mut current_runs),
-                        },
-                    );
+                    // Skip empty paragraphs. They arise when pulldown-cmark
+                    // wraps a lone image (or other lift-out element) in an
+                    // implicit paragraph: by the time End(Paragraph) fires,
+                    // current_runs has already been drained by the lift.
+                    if !current_runs.is_empty() {
+                        push_block(
+                            &mut stack,
+                            Block::Paragraph {
+                                runs: std::mem::take(&mut current_runs),
+                            },
+                        );
+                    }
                     in_paragraph = false;
                 }
             }
@@ -382,9 +388,22 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
                 });
             }
             Event::Start(Tag::Image { dest_url, .. }) => {
+                // Eager-flush any accumulated paragraph runs so the Image
+                // lands at the right position in document order. Without
+                // this, inline images like `text ![alt](u) more` produce
+                // [Image, Paragraph(["text ", " more"])] — image misordered,
+                // text-around-image collapsed.
+                if in_paragraph && !current_runs.is_empty() {
+                    push_block(
+                        &mut stack,
+                        Block::Paragraph {
+                            runs: std::mem::take(&mut current_runs),
+                        },
+                    );
+                }
                 // Buffer the image's alt text in a string. pulldown-cmark
                 // emits the alt as inline events between Start(Image) and
-                // End(Image); for v1 we collect text events while in_image
+                // End(Image); for v1 we collect text events while in_link
                 // is set. Reuse the link-text buffer (`s.in_link`) since
                 // links and images don't nest.
                 s.in_link = Some(String::new());

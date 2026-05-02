@@ -303,3 +303,56 @@ fn footnote_ref_in_paragraph_and_definition_collected_separately() {
     assert!(has_ref, "expected FootnoteRef in paragraph runs");
     assert!(has_defs, "expected FootnoteDefinitions block at end");
 }
+
+#[test]
+fn top_level_image_emits_only_image_block_no_empty_paragraph() {
+    let blocks = parse_for_test("![hello](https://example.com/img.png)");
+    assert_eq!(
+        blocks.len(),
+        1,
+        "expected exactly one block, got {blocks:?}"
+    );
+    assert!(matches!(&blocks[0], Block::Image { .. }));
+}
+
+#[test]
+fn inline_image_in_paragraph_preserves_document_order_and_position() {
+    let blocks = parse_for_test("text before ![alt](https://example.com/x.png) text after");
+    assert_eq!(
+        blocks.len(),
+        3,
+        "expected paragraph + image + paragraph, got {blocks:?}"
+    );
+
+    // First block: Paragraph with the leading text
+    let Block::Paragraph { runs } = &blocks[0] else {
+        panic!("first block was not Paragraph: {:?}", blocks[0]);
+    };
+    let combined: String = runs
+        .iter()
+        .filter_map(|r| match r {
+            Run::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(combined, "text before ");
+
+    // Second block: Image
+    let Block::Image { alt, .. } = &blocks[1] else {
+        panic!("second block was not Image: {:?}", blocks[1]);
+    };
+    assert_eq!(alt, "alt");
+
+    // Third block: Paragraph with the trailing text
+    let Block::Paragraph { runs } = &blocks[2] else {
+        panic!("third block was not Paragraph: {:?}", blocks[2]);
+    };
+    let combined: String = runs
+        .iter()
+        .filter_map(|r| match r {
+            Run::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(combined, " text after");
+}
