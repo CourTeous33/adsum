@@ -102,3 +102,37 @@ fn setext_h1_underline_promotes_paragraph_to_heading() {
     assert_eq!(blocks.len(), 1);
     assert!(matches!(&blocks[0], Block::Heading { level: 1, .. }));
 }
+
+#[test]
+fn unordered_list_with_three_items_emits_three_item_groups() {
+    let blocks = parse_for_test("- one\n- two\n- three");
+    assert_eq!(blocks.len(), 1);
+    let Block::UnorderedList { items } = &blocks[0] else {
+        panic!("expected unordered list, got {blocks:?}");
+    };
+    assert_eq!(items.len(), 3);
+}
+
+#[test]
+fn ordered_list_preserves_starting_number() {
+    let blocks = parse_for_test("3. three\n4. four");
+    let Block::OrderedList { start, items } = &blocks[0] else {
+        panic!("expected ordered list, got {blocks:?}");
+    };
+    assert_eq!(*start, 3);
+    assert_eq!(items.len(), 2);
+}
+
+#[test]
+fn nested_list_contains_inner_list_block_inside_outer_item() {
+    let blocks = parse_for_test("- outer\n  - inner-a\n  - inner-b");
+    let Block::UnorderedList { items } = &blocks[0] else {
+        panic!()
+    };
+    assert_eq!(items.len(), 1);
+    let outer_item = &items[0];
+    // outer item should contain a Paragraph and a nested UnorderedList
+    assert!(outer_item
+        .iter()
+        .any(|b| matches!(b, Block::UnorderedList { .. })));
+}

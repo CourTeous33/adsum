@@ -7,6 +7,8 @@ use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 pub enum Block {
     Paragraph { runs: Vec<Run> },
     Heading { level: u8, runs: Vec<Run> },
+    UnorderedList { items: Vec<Vec<Block>> },
+    OrderedList { start: u64, items: Vec<Vec<Block>> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -46,11 +48,18 @@ struct InlineState {
 /// accumulate into the right parent.
 enum Frame {
     Root(Vec<Block>),
+    UnorderedList { items: Vec<Vec<Block>> },
+    OrderedList { start: u64, items: Vec<Vec<Block>> },
+    ListItem { children: Vec<Block> },
 }
 
 fn push_block(stack: &mut [Frame], block: Block) {
     match stack.last_mut().unwrap() {
         Frame::Root(blocks) => blocks.push(block),
+        Frame::ListItem { children } => children.push(block),
+        // Lists shouldn't directly contain blocks — only ListItems do.
+        // If pulldown-cmark hands us a stray block at a list-frame, drop it.
+        Frame::UnorderedList { .. } | Frame::OrderedList { .. } => {}
     }
 }
 
@@ -118,6 +127,40 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
                     }
                 }
             }
+            Event::Start(Tag::List(start)) => {
+                stack.push(match start {
+                    Some(n) => Frame::OrderedList {
+                        start: n,
+                        items: Vec::new(),
+                    },
+                    None => Frame::UnorderedList { items: Vec::new() },
+                });
+            }
+            Event::End(TagEnd::List(_)) => {
+                let frame = stack.pop().unwrap();
+                let block = match frame {
+                    Frame::UnorderedList { items } => Block::UnorderedList { items },
+                    Frame::OrderedList { start, items } => Block::OrderedList { start, items },
+                    _ => continue, // shouldn't happen — pulldown-cmark guarantees pairing
+                };
+                push_block(&mut stack, block);
+            }
+            Event::Start(Tag::Item) => {
+                stack.push(Frame::ListItem {
+                    children: Vec::new(),
+                });
+            }
+            Event::End(TagEnd::Item) => {
+                let frame = stack.pop().unwrap();
+                if let Frame::ListItem { children } = frame {
+                    match stack.last_mut().unwrap() {
+                        Frame::UnorderedList { items } | Frame::OrderedList { items, .. } => {
+                            items.push(children)
+                        }
+                        _ => {}
+                    }
+                }
+            }
             Event::Text(t) if in_paragraph || in_heading.is_some() => {
                 if let Some(buf) = s.in_link.as_mut() {
                     buf.push_str(&t);
@@ -158,7 +201,10 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
     // Pop the root frame to recover the accumulated block list. If the parser
     // left additional frames on the stack (malformed input), discard them —
     // graceful degradation matters more than panicking on weird mid-stream
-    // input.
-    let Frame::Root(blocks) = stack.into_iter().next().unwrap();
+    // input. stack[0] is always Frame::Root: we seed it that way and only
+    // push list frames on top.
+    let Frame::Root(blocks) = stack.into_iter().next().unwrap() else {
+        unreachable!("root frame is always first")
+    };
     blocks
 }
