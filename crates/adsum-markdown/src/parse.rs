@@ -6,6 +6,7 @@ use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
     Paragraph { runs: Vec<Run> },
+    Heading { level: u8, runs: Vec<Run> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -44,6 +45,7 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
     let mut blocks = Vec::new();
     let mut current_runs: Vec<Run> = Vec::new();
     let mut in_paragraph = false;
+    let mut in_heading: Option<u8> = None;
     let mut s = InlineState::default();
 
     for event in parser {
@@ -72,12 +74,24 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
             }
             Event::End(TagEnd::Link) => {
                 if let (Some(text), Some(url)) = (s.in_link.take(), s.link_url.take()) {
-                    if in_paragraph {
+                    if in_paragraph || in_heading.is_some() {
                         current_runs.push(Run::Link { text, url });
                     }
                 }
             }
-            Event::Text(t) if in_paragraph => {
+            Event::Start(Tag::Heading { level, .. }) => {
+                in_heading = Some(level as u8);
+                current_runs.clear();
+            }
+            Event::End(TagEnd::Heading(_)) => {
+                if let Some(level) = in_heading.take() {
+                    blocks.push(Block::Heading {
+                        level,
+                        runs: std::mem::take(&mut current_runs),
+                    });
+                }
+            }
+            Event::Text(t) if in_paragraph || in_heading.is_some() => {
                 if let Some(buf) = s.in_link.as_mut() {
                     buf.push_str(&t);
                 } else {
@@ -89,13 +103,13 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
                     });
                 }
             }
-            Event::Code(c) if in_paragraph => {
+            Event::Code(c) if in_paragraph || in_heading.is_some() => {
                 current_runs.push(Run::Code {
                     code: c.into_string(),
                 });
             }
             // Hard break: spec says "Inserted into StyledText as \n."
-            Event::HardBreak if in_paragraph => {
+            Event::HardBreak if in_paragraph || in_heading.is_some() => {
                 current_runs.push(Run::Text {
                     text: "\n".into(),
                     bold: s.bold > 0,
@@ -104,7 +118,7 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
                 });
             }
             // Soft break: CommonMark default is single space.
-            Event::SoftBreak if in_paragraph => {
+            Event::SoftBreak if in_paragraph || in_heading.is_some() => {
                 current_runs.push(Run::Text {
                     text: " ".into(),
                     bold: s.bold > 0,

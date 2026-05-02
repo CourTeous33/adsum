@@ -57,3 +57,30 @@ fn paragraph_with_link_emits_link_run() {
     let Block::Paragraph { runs } = &blocks[0] else { panic!() };
     assert!(runs.iter().any(|r| matches!(r, Run::Link { text, url } if text == "docs" && url == "https://example.com")));
 }
+
+#[test]
+fn h1_through_h6_atx_headings_emit_heading_blocks_with_correct_levels() {
+    for (markdown, expected_level) in [
+        ("# h1", 1u8),
+        ("## h2", 2),
+        ("### h3", 3),
+        ("#### h4", 4),
+        ("##### h5", 5),
+        ("###### h6", 6),
+    ] {
+        let blocks = parse_for_test(markdown);
+        assert_eq!(blocks.len(), 1);
+        let Block::Heading { level, runs } = &blocks[0] else {
+            panic!("expected heading for {markdown:?}, got {blocks:?}");
+        };
+        assert_eq!(*level, expected_level);
+        assert_eq!(runs.len(), 1);
+    }
+}
+
+#[test]
+fn setext_h1_underline_promotes_paragraph_to_heading() {
+    let blocks = parse_for_test("title\n=====");
+    assert_eq!(blocks.len(), 1);
+    assert!(matches!(&blocks[0], Block::Heading { level: 1, .. }));
+}
