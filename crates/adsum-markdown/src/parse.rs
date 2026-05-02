@@ -32,6 +32,13 @@ pub enum Block {
         headers: Vec<Vec<Run>>,
         rows: Vec<Vec<Vec<Run>>>,
     },
+    Image {
+        url: String,
+        alt: String,
+    },
+    FootnoteDefinitions {
+        defs: Vec<(String, Vec<Block>)>,
+    },
 }
 
 /// One highlighted span inside a code block. Byte range into `content`,
@@ -60,6 +67,9 @@ pub enum Run {
         text: String,
         url: String,
     },
+    FootnoteRef {
+        label: String,
+    },
 }
 
 #[derive(Default)]
@@ -86,6 +96,7 @@ enum Frame {
     OrderedList { start: u64, items: Vec<Vec<Block>> },
     ListItem { children: Vec<Block> },
     Blockquote { children: Vec<Block> },
+    FootnoteDef { label: String, children: Vec<Block> },
 }
 
 fn push_block(stack: &mut [Frame], block: Block) {
@@ -93,6 +104,7 @@ fn push_block(stack: &mut [Frame], block: Block) {
         Frame::Root(blocks) => blocks.push(block),
         Frame::ListItem { children } => children.push(block),
         Frame::Blockquote { children } => children.push(block),
+        Frame::FootnoteDef { children, .. } => children.push(block),
         // Lists shouldn't directly contain blocks — only ListItems do.
         // If pulldown-cmark hands us a stray block at a list-frame, drop it.
         Frame::UnorderedList { .. } | Frame::OrderedList { .. } => {}
@@ -137,6 +149,8 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
     let mut current_row: Option<Vec<Vec<Run>>> = None; // Some when inside TableRow or TableHead
     let mut in_table_head = false;
     let mut in_table_cell = false;
+    let mut footnote_defs: Vec<(String, Vec<Block>)> = Vec::new();
+    let mut in_footnote: Option<String> = None; // Some(label) when accumulating a definition
     let mut s = InlineState::default();
 
     for event in parser {
@@ -367,6 +381,45 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
                     strikethrough: s.strikethrough > 0,
                 });
             }
+            Event::Start(Tag::Image { dest_url, .. }) => {
+                // Buffer the image's alt text in a string. pulldown-cmark
+                // emits the alt as inline events between Start(Image) and
+                // End(Image); for v1 we collect text events while in_image
+                // is set. Reuse the link-text buffer (`s.in_link`) since
+                // links and images don't nest.
+                s.in_link = Some(String::new());
+                s.link_url = Some(dest_url.into_string());
+            }
+            Event::End(TagEnd::Image) => {
+                if let (Some(alt), Some(url)) = (s.in_link.take(), s.link_url.take()) {
+                    push_block(&mut stack, Block::Image { url, alt });
+                }
+            }
+            Event::Start(Tag::FootnoteDefinition(label)) => {
+                in_footnote = Some(label.clone().into_string());
+                stack.push(Frame::FootnoteDef {
+                    label: label.into_string(),
+                    children: Vec::new(),
+                });
+            }
+            Event::End(TagEnd::FootnoteDefinition) => {
+                if in_footnote.take().is_some() {
+                    let frame = stack.pop().unwrap();
+                    if let Frame::FootnoteDef { label, children } = frame {
+                        footnote_defs.push((label, children));
+                    }
+                }
+            }
+            Event::FootnoteReference(label)
+                if in_paragraph
+                    || in_heading.is_some()
+                    || top_is_list_item(&stack)
+                    || in_table_cell =>
+            {
+                current_runs.push(Run::FootnoteRef {
+                    label: label.into_string(),
+                });
+            }
             _ => {}
         }
     }
@@ -375,9 +428,14 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
     // left additional frames on the stack (malformed input), discard them —
     // graceful degradation matters more than panicking on weird mid-stream
     // input. stack[0] is always Frame::Root: we seed it that way and only
-    // push list frames on top.
-    let Frame::Root(blocks) = stack.into_iter().next().unwrap() else {
+    // push list/blockquote/footnote frames on top.
+    let Frame::Root(mut blocks) = stack.into_iter().next().unwrap() else {
         unreachable!("root frame is always first")
     };
+    if !footnote_defs.is_empty() {
+        blocks.push(Block::FootnoteDefinitions {
+            defs: footnote_defs,
+        });
+    }
     blocks
 }

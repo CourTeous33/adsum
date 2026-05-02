@@ -273,3 +273,33 @@ fn table_with_two_headers_and_two_body_rows_parses_correctly() {
     assert_eq!(cell_text(&headers[0]), "a");
     assert_eq!(cell_text(&rows[1][1]), "4");
 }
+
+#[test]
+fn image_markdown_emits_image_block() {
+    let blocks = parse_for_test("![alt text](https://example.com/img.png)");
+    let img = blocks.iter().find_map(|b| match b {
+        Block::Image { url, alt } => Some((url.clone(), alt.clone())),
+        _ => None,
+    });
+    assert_eq!(
+        img,
+        Some(("https://example.com/img.png".into(), "alt text".into()))
+    );
+}
+
+#[test]
+fn footnote_ref_in_paragraph_and_definition_collected_separately() {
+    let md = "see foo[^1] for details\n\n[^1]: footnote body";
+    let blocks = parse_for_test(md);
+    // Should have a paragraph with the FootnoteRef run AND a FootnoteDefinitions block.
+    let has_ref = blocks.iter().any(|b| {
+        matches!(b, Block::Paragraph { runs }
+        if runs.iter().any(|r| matches!(r, Run::FootnoteRef { label } if label == "1")))
+    });
+    let has_defs = blocks.iter().any(|b| {
+        matches!(b, Block::FootnoteDefinitions { defs }
+        if defs.iter().any(|(label, _)| label == "1"))
+    });
+    assert!(has_ref, "expected FootnoteRef in paragraph runs");
+    assert!(has_defs, "expected FootnoteDefinitions block at end");
+}
