@@ -46,10 +46,12 @@ impl Render for Conversation {
             .id("conversation-transcript")
             .flex()
             .flex_col()
+            .flex_1()
+            .min_h_0()
+            .w_full()
             .gap_5()
             .p_4()
             .overflow_y_scroll()
-            .size_full()
             .text_size(px(adsum_tokens::TEXT_BODY));
 
         for turn in turns.iter() {
@@ -95,6 +97,8 @@ impl Render for Conversation {
 
         div()
             .size_full()
+            .flex()
+            .flex_col()
             .bg(adsum_tokens::bg_primary())
             .rounded(px(adsum_tokens::RADIUS_CHATBOX))
             .border_1()

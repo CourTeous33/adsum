@@ -198,6 +198,8 @@ impl ConversationsView {
                     .id("dashboard-transcript")
                     .flex()
                     .flex_col()
+                    .flex_1()
+                    .min_h_0()
                     .gap_5()
                     .pt_3()
                     .w_full()
