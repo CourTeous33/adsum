@@ -24,6 +24,10 @@ pub enum Block {
         content: String,
         highlights: Vec<HighlightSpan>,
     },
+    Blockquote {
+        children: Vec<Block>,
+    },
+    HorizontalRule,
 }
 
 /// One highlighted span inside a code block. Byte range into `content`,
@@ -77,12 +81,14 @@ enum Frame {
     UnorderedList { items: Vec<Vec<Block>> },
     OrderedList { start: u64, items: Vec<Vec<Block>> },
     ListItem { children: Vec<Block> },
+    Blockquote { children: Vec<Block> },
 }
 
 fn push_block(stack: &mut [Frame], block: Block) {
     match stack.last_mut().unwrap() {
         Frame::Root(blocks) => blocks.push(block),
         Frame::ListItem { children } => children.push(block),
+        Frame::Blockquote { children } => children.push(block),
         // Lists shouldn't directly contain blocks — only ListItems do.
         // If pulldown-cmark hands us a stray block at a list-frame, drop it.
         Frame::UnorderedList { .. } | Frame::OrderedList { .. } => {}
@@ -239,6 +245,20 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
                         },
                     );
                 }
+            }
+            Event::Start(Tag::BlockQuote) => {
+                stack.push(Frame::Blockquote {
+                    children: Vec::new(),
+                });
+            }
+            Event::End(TagEnd::BlockQuote) => {
+                let frame = stack.pop().unwrap();
+                if let Frame::Blockquote { children } = frame {
+                    push_block(&mut stack, Block::Blockquote { children });
+                }
+            }
+            Event::Rule => {
+                push_block(&mut stack, Block::HorizontalRule);
             }
             Event::Text(t) if code_block_lang.is_some() => {
                 code_block_buf.push_str(&t);

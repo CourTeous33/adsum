@@ -231,3 +231,21 @@ fn unclosed_fenced_code_block_still_emits_code_block_with_partial_content() {
     assert_eq!(lang.as_deref(), Some("rust"));
     assert!(content.contains("fn foo() {"));
 }
+
+#[test]
+fn blockquote_with_paragraph_emits_blockquote_block_containing_paragraph() {
+    let blocks = parse_for_test("> quoted text");
+    assert_eq!(blocks.len(), 1);
+    let Block::Blockquote { children } = &blocks[0] else {
+        panic!("expected blockquote, got {blocks:?}");
+    };
+    assert_eq!(children.len(), 1);
+    assert!(matches!(&children[0], Block::Paragraph { .. }));
+}
+
+#[test]
+fn horizontal_rule_emits_singleton_block() {
+    let blocks = parse_for_test("---");
+    assert_eq!(blocks.len(), 1);
+    assert!(matches!(&blocks[0], Block::HorizontalRule));
+}
