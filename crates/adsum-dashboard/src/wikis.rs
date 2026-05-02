@@ -147,12 +147,15 @@ impl WikisView {
         };
 
         div()
+            .id("wikis-detail")
             .flex_1()
             .min_w_0()
+            .min_h_0()
             .flex()
             .flex_col()
             .px_8()
             .py_5()
+            .overflow_y_scroll()
             .child(body)
             .into_any_element()
     }
