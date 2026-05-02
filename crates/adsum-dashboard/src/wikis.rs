@@ -139,30 +139,7 @@ impl WikisView {
 
     fn render_detail(&self) -> AnyElement {
         let body: AnyElement = match &self.content {
-            Ok(text) => {
-                let lines: Vec<gpui::AnyElement> = text
-                    .lines()
-                    .map(|line| {
-                        div()
-                            .text_color(adsum_tokens::text_primary())
-                            .child(line.to_string())
-                            .into_any_element()
-                    })
-                    .collect();
-                let mut col = div()
-                    .id("wikis-detail")
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .w_full()
-                    .text_size(px(adsum_tokens::TEXT_BODY))
-                    .font_family("Menlo")
-                    .overflow_y_scroll();
-                for line in lines {
-                    col = col.child(line);
-                }
-                col.into_any_element()
-            }
+            Ok(text) => adsum_markdown::Renderer::new().render(text),
             Err(err) => div()
                 .text_color(adsum_tokens::error_red())
                 .child(err.0.clone())
