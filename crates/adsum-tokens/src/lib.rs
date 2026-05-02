@@ -16,13 +16,18 @@ pub const TEXT_PRIMARY: u32 = 0xededed;
 pub const TEXT_MUTED: u32 = 0x7a7a82;
 pub const TEXT_DIM: u32 = 0x4a4a52;
 pub const ACCENT: u32 = 0xa78bfa;
+pub const ACCENT_DIM: u32 = 0x6d5aa8;
 pub const ERROR_RED: u32 = 0xff6b6b;
+pub const CODE_BG: u32 = 0x16161a;
 
 // ---------- Typography (in px) ----------
 
 pub const TEXT_BODY: f32 = 13.0;
 pub const TEXT_INPUT: f32 = 18.0;
 pub const TEXT_HEADING: f32 = 14.0;
+pub const TEXT_HEADING_1: f32 = 24.0;
+pub const TEXT_HEADING_2: f32 = 20.0;
+pub const TEXT_HEADING_3: f32 = 16.0;
 pub const TEXT_META: f32 = 11.0;
 
 // ---------- Spacing (multiples of 4) ----------
@@ -77,8 +82,14 @@ pub fn text_dim() -> Rgba {
 pub fn accent() -> Rgba {
     rgb(ACCENT)
 }
+pub fn accent_dim() -> Rgba {
+    rgb(ACCENT_DIM)
+}
 pub fn error_red() -> Rgba {
     rgb(ERROR_RED)
+}
+pub fn code_bg() -> Rgba {
+    rgb(CODE_BG)
 }
 
 pub fn s(level: u8) -> Pixels {

@@ -1,0 +1,16 @@
+[package]
+name = "adsum-markdown"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+adsum-tokens   = { path = "../adsum-tokens" }
+gpui           = { workspace = true }
+pulldown-cmark = { workspace = true }
+syntect        = { workspace = true }
+gh-emoji       = { workspace = true }
+
+[dev-dependencies]
+# (no test-only deps yet; plain unit tests using std)

@@ -198,6 +198,8 @@ impl ConversationsView {
                     .id("dashboard-transcript")
                     .flex()
                     .flex_col()
+                    .flex_1()
+                    .min_h_0()
                     .gap_5()
                     .pt_3()
                     .w_full()
@@ -235,7 +237,10 @@ impl ConversationsView {
                         }
                     };
 
-                    let assistant_row = div().w_full().text_color(text_color).child(body_text);
+                    let assistant_row = div()
+                        .w_full()
+                        .text_color(text_color)
+                        .child(adsum_markdown::Renderer::new().render(&body_text));
 
                     transcript = transcript.child(user_row).child(assistant_row);
                 }
