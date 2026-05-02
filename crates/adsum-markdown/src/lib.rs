@@ -12,6 +12,7 @@
 //!   Revisit if this proves problematic in real wiki/chat content.
 
 mod parse;
+mod syntax;
 
 /// Test-only re-exports of the internal `Block`/`Run` types so integration
 /// tests can assert on the deterministic parse layer. Not part of the

@@ -269,12 +269,17 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
             }
             Event::End(TagEnd::CodeBlock) => {
                 if let Some(lang) = code_block_lang.take() {
+                    let content = std::mem::take(&mut code_block_buf);
+                    let highlights = match &lang {
+                        Some(l) => crate::syntax::highlight(l, &content),
+                        None => Vec::new(),
+                    };
                     push_block(
                         &mut stack,
                         Block::CodeBlock {
                             lang,
-                            content: std::mem::take(&mut code_block_buf),
-                            highlights: Vec::new(),
+                            content,
+                            highlights,
                         },
                     );
                 }

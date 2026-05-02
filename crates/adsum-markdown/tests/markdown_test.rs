@@ -199,17 +199,11 @@ fn nested_list_outer_item_has_text_paragraph_before_nested_list() {
 fn fenced_code_block_with_lang_extracts_lang_string_and_content() {
     let blocks = parse_for_test("```rust\nfn foo() {}\n```");
     assert_eq!(blocks.len(), 1);
-    let Block::CodeBlock {
-        lang,
-        content,
-        highlights,
-    } = &blocks[0]
-    else {
+    let Block::CodeBlock { lang, content, .. } = &blocks[0] else {
         panic!("expected code block, got {blocks:?}");
     };
     assert_eq!(lang.as_deref(), Some("rust"));
     assert_eq!(content, "fn foo() {}\n");
-    assert!(highlights.is_empty(), "no syntect yet");
 }
 
 #[test]
@@ -355,4 +349,28 @@ fn inline_image_in_paragraph_preserves_document_order_and_position() {
         })
         .collect();
     assert_eq!(combined, " text after");
+}
+
+#[test]
+fn rust_code_block_gets_non_empty_highlights() {
+    let blocks = parse_for_test("```rust\nfn foo() {}\n```");
+    let Block::CodeBlock { highlights, .. } = &blocks[0] else {
+        panic!()
+    };
+    assert!(
+        !highlights.is_empty(),
+        "syntect should emit at least one highlight span for valid Rust"
+    );
+}
+
+#[test]
+fn unknown_lang_code_block_has_empty_highlights() {
+    let blocks = parse_for_test("```novel\nplain prose\n```");
+    let Block::CodeBlock { highlights, .. } = &blocks[0] else {
+        panic!()
+    };
+    assert!(
+        highlights.is_empty(),
+        "unknown language should produce no highlights"
+    );
 }
