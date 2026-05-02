@@ -249,3 +249,27 @@ fn horizontal_rule_emits_singleton_block() {
     assert_eq!(blocks.len(), 1);
     assert!(matches!(&blocks[0], Block::HorizontalRule));
 }
+
+#[test]
+fn table_with_two_headers_and_two_body_rows_parses_correctly() {
+    let md = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |";
+    let blocks = parse_for_test(md);
+    assert_eq!(blocks.len(), 1);
+    let Block::Table { headers, rows } = &blocks[0] else {
+        panic!("expected table, got {blocks:?}");
+    };
+    assert_eq!(headers.len(), 2);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].len(), 2);
+    // Spot-check cell content
+    let cell_text = |runs: &Vec<Run>| -> String {
+        runs.iter()
+            .filter_map(|r| match r {
+                Run::Text { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(cell_text(&headers[0]), "a");
+    assert_eq!(cell_text(&rows[1][1]), "4");
+}

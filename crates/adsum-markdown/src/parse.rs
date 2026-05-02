@@ -28,6 +28,10 @@ pub enum Block {
         children: Vec<Block>,
     },
     HorizontalRule,
+    Table {
+        headers: Vec<Vec<Run>>,
+        rows: Vec<Vec<Vec<Run>>>,
+    },
 }
 
 /// One highlighted span inside a code block. Byte range into `content`,
@@ -128,6 +132,11 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
     let mut in_heading: Option<u8> = None;
     let mut code_block_lang: Option<Option<String>> = None; // outer Some = in code block; inner Option<String> = lang
     let mut code_block_buf = String::new();
+    let mut table_headers: Option<Vec<Vec<Run>>> = None; // Some when inside Table
+    let mut table_rows: Vec<Vec<Vec<Run>>> = Vec::new();
+    let mut current_row: Option<Vec<Vec<Run>>> = None; // Some when inside TableRow or TableHead
+    let mut in_table_head = false;
+    let mut in_table_cell = false;
     let mut s = InlineState::default();
 
     for event in parser {
@@ -176,7 +185,11 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
             }
             Event::End(TagEnd::Link) => {
                 if let (Some(text), Some(url)) = (s.in_link.take(), s.link_url.take()) {
-                    if in_paragraph || in_heading.is_some() || top_is_list_item(&stack) {
+                    if in_paragraph
+                        || in_heading.is_some()
+                        || top_is_list_item(&stack)
+                        || in_table_cell
+                    {
                         current_runs.push(Run::Link { text, url });
                     }
                 }
@@ -260,10 +273,53 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
             Event::Rule => {
                 push_block(&mut stack, Block::HorizontalRule);
             }
+            Event::Start(Tag::Table(_)) => {
+                table_headers = Some(Vec::new());
+                table_rows.clear();
+            }
+            Event::End(TagEnd::Table) => {
+                let headers = table_headers.take().unwrap_or_default();
+                let rows = std::mem::take(&mut table_rows);
+                push_block(&mut stack, Block::Table { headers, rows });
+            }
+            Event::Start(Tag::TableHead) => {
+                in_table_head = true;
+                current_row = Some(Vec::new());
+            }
+            Event::End(TagEnd::TableHead) => {
+                in_table_head = false;
+                if let Some(cells) = current_row.take() {
+                    table_headers = Some(cells);
+                }
+            }
+            Event::Start(Tag::TableRow) => {
+                current_row = Some(Vec::new());
+            }
+            Event::End(TagEnd::TableRow) => {
+                if let Some(cells) = current_row.take() {
+                    table_rows.push(cells);
+                }
+            }
+            Event::Start(Tag::TableCell) => {
+                in_table_cell = true;
+                current_runs.clear();
+            }
+            Event::End(TagEnd::TableCell) => {
+                in_table_cell = false;
+                if let Some(row) = current_row.as_mut() {
+                    row.push(std::mem::take(&mut current_runs));
+                }
+                let _ = in_table_head; // silence unused warning if not needed
+            }
             Event::Text(t) if code_block_lang.is_some() => {
                 code_block_buf.push_str(&t);
             }
-            Event::Text(t) if in_paragraph || in_heading.is_some() || top_is_list_item(&stack) => {
+            Event::Text(t)
+                if in_paragraph
+                    || in_heading.is_some()
+                    || top_is_list_item(&stack)
+                    || in_table_cell =>
+            {
                 if let Some(buf) = s.in_link.as_mut() {
                     buf.push_str(&t);
                 } else {
@@ -275,13 +331,21 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
                     });
                 }
             }
-            Event::Code(c) if in_paragraph || in_heading.is_some() || top_is_list_item(&stack) => {
+            Event::Code(c)
+                if in_paragraph
+                    || in_heading.is_some()
+                    || top_is_list_item(&stack)
+                    || in_table_cell =>
+            {
                 current_runs.push(Run::Code {
                     code: c.into_string(),
                 });
             }
             Event::HardBreak
-                if in_paragraph || in_heading.is_some() || top_is_list_item(&stack) =>
+                if in_paragraph
+                    || in_heading.is_some()
+                    || top_is_list_item(&stack)
+                    || in_table_cell =>
             {
                 current_runs.push(Run::Text {
                     text: "\n".into(),
@@ -291,7 +355,10 @@ pub(crate) fn parse_blocks(text: &str) -> Vec<Block> {
                 });
             }
             Event::SoftBreak
-                if in_paragraph || in_heading.is_some() || top_is_list_item(&stack) =>
+                if in_paragraph
+                    || in_heading.is_some()
+                    || top_is_list_item(&stack)
+                    || in_table_cell =>
             {
                 current_runs.push(Run::Text {
                     text: " ".into(),
