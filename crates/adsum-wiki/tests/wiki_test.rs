@@ -194,3 +194,47 @@ fn list_pages_includes_non_conforming_filenames() {
     assert!(slugs.contains("normal"));
     assert!(slugs.contains("Some Entity"));
 }
+
+#[test]
+fn create_page_writes_file_with_content_and_lists_it() {
+    let dir = tempdir().expect("tempdir");
+    let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
+
+    store.create_page("hello", "# Hello\n\nbody\n").expect("create");
+
+    let body = store.read_page("hello").expect("read");
+    assert_eq!(body, "# Hello\n\nbody\n");
+
+    let pages = store.list_pages().expect("list");
+    assert_eq!(pages.len(), 1);
+    assert_eq!(pages[0].slug, "hello");
+}
+
+#[test]
+fn create_page_returns_page_already_exists_when_slug_taken() {
+    let dir = tempdir().expect("tempdir");
+    let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
+
+    store.create_page("dup", "first").expect("create first");
+    let result = store.create_page("dup", "second");
+    assert!(
+        matches!(&result, Err(adsum_wiki::WikiError::PageAlreadyExists(s)) if s == "dup"),
+        "expected PageAlreadyExists, got {result:?}"
+    );
+
+    // Existing content must NOT have been clobbered.
+    let body = store.read_page("dup").expect("read");
+    assert_eq!(body, "first");
+}
+
+#[test]
+fn create_page_rejects_invalid_slug_without_writing() {
+    let dir = tempdir().expect("tempdir");
+    let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
+
+    let result = store.create_page("Bad Slug", "x");
+    assert!(matches!(result, Err(adsum_wiki::WikiError::InvalidSlug(_))));
+
+    let pages = store.list_pages().expect("list");
+    assert!(pages.is_empty(), "no file should have been written");
+}

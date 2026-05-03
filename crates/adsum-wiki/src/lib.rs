@@ -26,6 +26,8 @@ pub enum WikiError {
     InvalidSlug(String),
     #[error("page not found: {0}")]
     PageNotFound(String),
+    #[error("page already exists: {0}")]
+    PageAlreadyExists(String),
 }
 
 #[derive(Debug, Clone)]
@@ -113,6 +115,19 @@ impl WikiStore {
     pub fn write_page(&self, slug: &str, content: &str) -> Result<(), WikiError> {
         validate_slug(slug)?;
         let path = self.root.join("pages").join(format!("{slug}.md"));
+        std::fs::write(path, content)?;
+        Ok(())
+    }
+
+    /// Create a new page. Errors with `PageAlreadyExists` if `pages/<slug>.md`
+    /// already exists; never overwrites. Use `write_page` for overwrite-on-write
+    /// semantics (the agent's `wiki_write` tool relies on that).
+    pub fn create_page(&self, slug: &str, content: &str) -> Result<(), WikiError> {
+        validate_slug(slug)?;
+        let path = self.root.join("pages").join(format!("{slug}.md"));
+        if path.exists() {
+            return Err(WikiError::PageAlreadyExists(slug.to_string()));
+        }
         std::fs::write(path, content)?;
         Ok(())
     }
