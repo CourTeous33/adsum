@@ -66,6 +66,7 @@ dependencies = [
  "adsum-state",
  "adsum-tokens",
  "gpui",
+ "serde_json",
 ]
 
 [[package]]
@@ -79,6 +80,7 @@ dependencies = [
  "adsum-tokens",
  "adsum-wiki",
  "gpui",
+ "serde_json",
 ]
 
 [[package]]
