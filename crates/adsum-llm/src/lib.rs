@@ -8,6 +8,7 @@
 
 use adsum_settings::{ModelId, Provider};
 use adsum_state::Message;
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 mod anthropic;
@@ -49,6 +50,11 @@ pub struct LlmService {
     /// drop — intentional for app-exit teardown.
     #[allow(dead_code)]
     runtime: tokio::runtime::Runtime,
+    /// Stashed for Task 14, when the agent loop will start consuming it.
+    /// Today: registered but unused — the single-shot `handle_request` body
+    /// hasn't been replaced yet.
+    #[allow(dead_code)]
+    registry: Arc<adsum_tools::ToolRegistry>,
 }
 
 impl Drop for LlmService {
@@ -64,7 +70,7 @@ impl Drop for LlmService {
 }
 
 impl LlmService {
-    pub fn spawn() -> Self {
+    pub fn spawn(registry: Arc<adsum_tools::ToolRegistry>) -> Self {
         let (request_tx, request_rx) = async_channel::unbounded::<LlmRequest>();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -91,6 +97,7 @@ impl LlmService {
             request_tx,
             worker: Some(worker),
             runtime,
+            registry,
         }
     }
 

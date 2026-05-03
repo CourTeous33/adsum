@@ -35,6 +35,7 @@ impl Chatbox {
         llm: Arc<LlmService>,
         in_flight_slot: Arc<Mutex<Option<CancellationToken>>>,
         conversation_slot: Arc<Mutex<Option<gpui::WindowHandle<Conversation>>>>,
+        _skills: Arc<adsum_skills::SkillStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
