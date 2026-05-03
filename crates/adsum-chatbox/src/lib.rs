@@ -8,6 +8,7 @@ use gpui::{
     prelude::*, px, size,
 };
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 mod parse;
@@ -45,11 +46,46 @@ impl Chatbox {
     ) -> Self {
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
-        let activation_subscription = cx.observe_window_activation(window, |this, window, _cx| {
-            if !window.is_window_active() {
-                this.cancel_in_flight();
-                window.remove_window();
+        let activation_subscription = cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                return;
             }
+            // Defer the dismiss decision: AppKit fires resignKey on the
+            // chatbox before the popup's becomeKey has propagated to GPUI's
+            // per-window `active` cell. Yield ~80ms so the ordering settles,
+            // then re-check both windows on the foreground tick.
+            let conv_handle = this
+                .conversation_slot
+                .lock()
+                .unwrap()
+                .as_ref()
+                .copied();
+            let chatbox_window: gpui::WindowHandle<Self> = window
+                .window_handle()
+                .downcast::<Self>()
+                .expect("chatbox window must have Chatbox as its root view");
+            cx.spawn(async move |_, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(80))
+                    .await;
+                let _ = chatbox_window.update(cx, |chatbox, window, cx| {
+                    // Chatbox regained focus mid-defer: do nothing.
+                    if window.is_window_active() {
+                        return;
+                    }
+                    // Popup is now active (user clicked into it): keep alive.
+                    let conv_active = conv_handle
+                        .and_then(|h| h.is_active(cx))
+                        .unwrap_or(false);
+                    if conv_active {
+                        return;
+                    }
+                    // Real blur — focus left Adsum entirely. Dismiss.
+                    chatbox.cancel_in_flight();
+                    window.remove_window();
+                });
+            })
+            .detach();
         });
         Self {
             current_text: String::new(),
