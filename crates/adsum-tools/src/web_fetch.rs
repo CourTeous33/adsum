@@ -110,24 +110,33 @@ impl Tool for WebFetchTool {
     }
 }
 
-/// Strip HTML to plain readable text. Removes `<script>` / `<style>` /
+/// Strip HTML to plain readable text. Removes `<script>`, `<style>`, and
 /// `<noscript>` blocks (with content), drops remaining tags, and collapses
 /// whitespace. Crude but adequate for cutting a typical 200 KB blog page
 /// down to 30–60 KB of article body, which keeps subsequent agent-loop
 /// iterations from blowing the provider's token budget.
+///
+/// `regex` doesn't support backreferences, so the three "block" tags get
+/// three separate patterns rather than one alternation with `\1`.
 fn strip_html(body: &str) -> String {
-    static SCRIPT_STYLE: OnceLock<Regex> = OnceLock::new();
+    static SCRIPT: OnceLock<Regex> = OnceLock::new();
+    static STYLE: OnceLock<Regex> = OnceLock::new();
+    static NOSCRIPT: OnceLock<Regex> = OnceLock::new();
     static TAG: OnceLock<Regex> = OnceLock::new();
     static WHITESPACE: OnceLock<Regex> = OnceLock::new();
 
-    let script_style = SCRIPT_STYLE
-        .get_or_init(|| Regex::new(r"(?is)<(script|style|noscript)[^>]*>.*?</\1>").unwrap());
+    let script = SCRIPT.get_or_init(|| Regex::new(r"(?is)<script[^>]*>.*?</script>").unwrap());
+    let style = STYLE.get_or_init(|| Regex::new(r"(?is)<style[^>]*>.*?</style>").unwrap());
+    let noscript =
+        NOSCRIPT.get_or_init(|| Regex::new(r"(?is)<noscript[^>]*>.*?</noscript>").unwrap());
     let tag = TAG.get_or_init(|| Regex::new(r"<[^>]*>").unwrap());
     let whitespace = WHITESPACE.get_or_init(|| Regex::new(r"\s+").unwrap());
 
-    let stage1 = script_style.replace_all(body, " ");
-    let stage2 = tag.replace_all(&stage1, " ");
-    whitespace.replace_all(&stage2, " ").trim().to_string()
+    let stage1 = script.replace_all(body, " ");
+    let stage2 = style.replace_all(&stage1, " ");
+    let stage3 = noscript.replace_all(&stage2, " ");
+    let stage4 = tag.replace_all(&stage3, " ");
+    whitespace.replace_all(&stage4, " ").trim().to_string()
 }
 
 #[cfg(test)]
