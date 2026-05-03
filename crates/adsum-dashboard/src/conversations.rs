@@ -2,7 +2,7 @@
 //! detail pane. Read-only.
 
 use adsum_state::persistence::{load_all_sessions, load_session, SessionSummary};
-use adsum_state::{Session, TurnKind};
+use adsum_state::{Block, Session, TurnKind};
 use gpui::{div, prelude::*, px, AnyElement, Context, MouseButton};
 
 pub struct ConversationsView {
@@ -207,45 +207,89 @@ impl ConversationsView {
                     .overflow_y_scroll();
 
                 for turn in &session.turns {
-                    let user_text = turn.user_text_block().unwrap_or("").to_string();
-                    let assistant_text = turn.final_assistant_text();
-
-                    // User: right-aligned bubble (Claude.ai style). max_w on
-                    // the bubble forces long text to wrap inside it rather
-                    // than stretching full width.
-                    let user_row = div().w_full().flex().flex_row().justify_end().child(
-                        div()
-                            .max_w(px(560.0))
-                            .px_4()
-                            .py_2()
-                            .rounded(px(12.0))
-                            .bg(adsum_tokens::bg_hover())
-                            .text_color(adsum_tokens::text_primary())
-                            .child(user_text),
-                    );
-
-                    let (text_color, body_text) = match &turn.kind {
-                        TurnKind::Ok | TurnKind::InProgress => {
-                            (adsum_tokens::text_primary(), assistant_text.clone())
+                    for block in &turn.blocks {
+                        match block {
+                            Block::UserText { text } => {
+                                // User: right-aligned bubble (Claude.ai
+                                // style). max_w on the bubble forces long
+                                // text to wrap inside it rather than
+                                // stretching full width.
+                                let user_row =
+                                    div().w_full().flex().flex_row().justify_end().child(
+                                        div()
+                                            .max_w(px(560.0))
+                                            .px_4()
+                                            .py_2()
+                                            .rounded(px(12.0))
+                                            .bg(adsum_tokens::bg_hover())
+                                            .text_color(adsum_tokens::text_primary())
+                                            .child(text.clone()),
+                                    );
+                                transcript = transcript.child(user_row);
+                            }
+                            Block::AssistantText { text } => {
+                                let renderer = adsum_markdown::Renderer::new()
+                                    .with_streaming_cursor(matches!(
+                                        turn.kind,
+                                        TurnKind::InProgress
+                                    ));
+                                let assistant_row = div()
+                                    .w_full()
+                                    .text_color(adsum_tokens::text_primary())
+                                    .child(renderer.render(text));
+                                transcript = transcript.child(assistant_row);
+                            }
+                            Block::SkillInvocation { name, args } => {
+                                let label = if args.is_empty() {
+                                    format!("▸ /{name}")
+                                } else {
+                                    format!("▸ /{name} \"{args}\"")
+                                };
+                                let row = div()
+                                    .w_full()
+                                    .text_color(adsum_tokens::text_dim())
+                                    .child(label);
+                                transcript = transcript.child(row);
+                            }
+                            // Tool blocks are rendered in Task 17.
+                            Block::ToolUse { .. } | Block::ToolResult { .. } => {}
                         }
-                        TurnKind::Cancelled if assistant_text.is_empty() => {
-                            (adsum_tokens::text_dim(), "(cancelled)".into())
+                    }
+
+                    // Per-turn final-state markers (preserve previous
+                    // behavior).
+                    match &turn.kind {
+                        TurnKind::Cancelled
+                            if turn
+                                .blocks
+                                .iter()
+                                .all(|b| !matches!(b, Block::AssistantText { .. })) =>
+                        {
+                            transcript = transcript.child(
+                                div()
+                                    .w_full()
+                                    .text_color(adsum_tokens::text_dim())
+                                    .child("(cancelled)"),
+                            );
                         }
-                        TurnKind::Cancelled => (
-                            adsum_tokens::text_primary(),
-                            format!("{}…", assistant_text),
-                        ),
+                        TurnKind::Cancelled => {
+                            transcript = transcript.child(
+                                div()
+                                    .w_full()
+                                    .text_color(adsum_tokens::text_dim())
+                                    .child("…"),
+                            );
+                        }
                         TurnKind::Error { message, .. } => {
-                            (adsum_tokens::error_red(), format!("Error: {message}"))
+                            transcript = transcript.child(
+                                div()
+                                    .w_full()
+                                    .text_color(adsum_tokens::error_red())
+                                    .child(format!("Error: {message}")),
+                            );
                         }
-                    };
-
-                    let assistant_row = div()
-                        .w_full()
-                        .text_color(text_color)
-                        .child(adsum_markdown::Renderer::new().render(&body_text));
-
-                    transcript = transcript.child(user_row).child(assistant_row);
+                        _ => {}
+                    }
                 }
 
                 div()
