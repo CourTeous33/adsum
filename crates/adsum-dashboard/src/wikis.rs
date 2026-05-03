@@ -218,8 +218,8 @@ impl WikisView {
                             this.wikis.handle_create_key(event, cx);
                         },
                     ))
-                    .child(div().text_color(display_color).child(display))
-                    .child(div().ml_1().child(self.create_caret.render())),
+                    .child(self.create_caret.render())
+                    .child(div().ml_1().text_color(display_color).child(display)),
             );
         if let Some(msg) = error {
             row = row.child(

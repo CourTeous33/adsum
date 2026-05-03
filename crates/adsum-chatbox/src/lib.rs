@@ -1,3 +1,4 @@
+use adsum_ui::caret::{Caret, spawn_blink};
 use adsum_conversation::Conversation;
 use adsum_llm::LlmService;
 use adsum_settings::Settings;
@@ -24,6 +25,7 @@ pub struct Chatbox {
     in_flight_slot: Arc<Mutex<Option<CancellationToken>>>,
     conversation_slot: Arc<Mutex<Option<gpui::WindowHandle<Conversation>>>>,
     skills: Arc<adsum_skills::SkillStore>,
+    caret: Caret,
 }
 
 impl Focusable for Chatbox {
@@ -87,6 +89,11 @@ impl Chatbox {
             })
             .detach();
         });
+        let mut caret = Caret::new();
+        // Blink for the entity's lifetime — `this.update` returns Err once
+        // the chatbox window closes, which `spawn_blink` treats as exit.
+        let blink = spawn_blink(cx, |this: &mut Chatbox| &mut this.caret, |_| true);
+        caret.set_task(blink);
         Self {
             current_text: String::new(),
             focus_handle,
@@ -97,6 +104,7 @@ impl Chatbox {
             in_flight_slot,
             conversation_slot,
             skills,
+            caret,
         }
     }
 
@@ -354,6 +362,7 @@ impl Render for Chatbox {
             } else {
                 None
             })
+            .child(self.caret.render())
             .child(div().text_color(display_text.1).child(display_text.0))
     }
 }
