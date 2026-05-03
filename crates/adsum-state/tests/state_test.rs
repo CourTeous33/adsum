@@ -95,6 +95,7 @@ fn finalize_turn_idempotent_after_first_call() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn messages_for_llm_skips_errors_and_empty_cancellations() {
     let mut s = AppState::default();
     s.start_session();
@@ -129,6 +130,7 @@ fn messages_for_llm_skips_errors_and_empty_cancellations() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn messages_for_llm_includes_only_user_for_in_progress_tail() {
     let mut s = AppState::default();
     s.start_session();

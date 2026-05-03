@@ -116,11 +116,22 @@ impl Session {
         }
     }
 
+    /// Flat list of blocks across all turns, in conversation order. The agent
+    /// loop (Task 14) appends to this list as iteration proceeds; for now,
+    /// the chatbox uses it to build the single-shot request payload.
+    pub fn blocks_for_llm(&self) -> Vec<Block> {
+        self.turns
+            .iter()
+            .flat_map(|t| t.blocks.iter().cloned())
+            .collect()
+    }
+
     /// Build the message list for the next LLM call. Drops turns that don't
     /// have usable assistant content (Error always; Cancelled with empty
     /// assistant_text). The current InProgress turn (if any) contributes
     /// only its user_text — the model never sees its own partial output as
     /// "assistant" history.
+    #[deprecated(note = "use Session::blocks_for_llm() — removed in Task 14")]
     pub fn messages_for_llm(&self) -> Vec<Message> {
         let mut out = Vec::new();
         for turn in &self.turns {
@@ -197,6 +208,10 @@ impl AppState {
 
     pub fn current_session(&self) -> Option<&Session> {
         self.current_session.as_ref()
+    }
+
+    pub fn current_session_mut(&mut self) -> Option<&mut Session> {
+        self.current_session.as_mut()
     }
 
     pub fn start_session(&mut self) -> &Session {

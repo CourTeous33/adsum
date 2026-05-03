@@ -7,7 +7,7 @@
 //! which both the GPUI executor and tokio accept.
 
 use adsum_settings::{ModelId, Provider};
-use adsum_state::Message;
+use adsum_state::Block;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -22,10 +22,10 @@ pub const SYSTEM_PROMPT: &str =
 
 #[derive(Debug)]
 pub struct LlmRequest {
-    pub messages: Vec<Message>,
+    pub blocks: Vec<Block>,
     pub model: ModelId,
     pub api_key: String,
-    pub system: &'static str,
+    pub system: String,
     pub chunks_tx: async_channel::Sender<LlmChunk>,
     pub cancel: CancellationToken,
 }
@@ -180,8 +180,8 @@ async fn handle_request(client: reqwest::Client, req: LlmRequest) {
             &client,
             &req.api_key,
             &req.model.name,
-            &req.messages,
-            req.system,
+            &req.blocks,
+            &req.system,
         )
         .await
         .map(|s| Box::pin(s) as ChunkStream),
@@ -189,8 +189,8 @@ async fn handle_request(client: reqwest::Client, req: LlmRequest) {
             &client,
             &req.api_key,
             &req.model.name,
-            &req.messages,
-            req.system,
+            &req.blocks,
+            &req.system,
         )
         .await
         .map(|s| Box::pin(s) as ChunkStream),
@@ -248,7 +248,7 @@ impl ProviderError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use adsum_state::{Message, Role};
+    use adsum_state::Block;
 
     #[test]
     fn supported_models_lists_five_models() {
@@ -279,16 +279,13 @@ mod tests {
             .unwrap();
         let (tx, rx) = async_channel::unbounded::<LlmChunk>();
         let req = LlmRequest {
-            messages: vec![Message {
-                role: Role::User,
-                content: "hi".into(),
-            }],
+            blocks: vec![Block::UserText { text: "hi".into() }],
             model: ModelId {
                 provider: Provider::Anthropic,
                 name: "claude-sonnet-4-6".into(),
             },
             api_key: String::new(),
-            system: SYSTEM_PROMPT,
+            system: SYSTEM_PROMPT.to_string(),
             chunks_tx: tx,
             cancel: CancellationToken::new(),
         };
@@ -321,13 +318,13 @@ mod tests {
         cancel.cancel(); // pre-cancelled
 
         let req = LlmRequest {
-            messages: vec![],
+            blocks: vec![],
             model: ModelId {
                 provider: Provider::Anthropic,
                 name: "claude-sonnet-4-6".into(),
             },
             api_key: String::new(), // forces no_key short-circuit
-            system: SYSTEM_PROMPT,
+            system: SYSTEM_PROMPT.to_string(),
             chunks_tx: tx,
             cancel,
         };

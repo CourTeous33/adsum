@@ -6,7 +6,7 @@
 //! the literal `data: [DONE]` line.
 
 use crate::ProviderError;
-use adsum_state::{Message, Role};
+use adsum_state::Block;
 use eventsource_stream::Eventsource;
 use futures_util::{Stream, StreamExt};
 use reqwest::Client;
@@ -27,27 +27,43 @@ struct RequestMessage<'a> {
     content: &'a str,
 }
 
+/// Translate `&[Block]` into the existing single-shot wire format that
+/// `stream()` already sends. Skips `Block::SkillInvocation`. Tool blocks
+/// don't appear in this single-shot path; they trigger a `debug_assert!`.
+fn blocks_to_v1_messages(blocks: &[Block]) -> Vec<RequestMessage<'_>> {
+    blocks
+        .iter()
+        .filter_map(|b| match b {
+            Block::UserText { text } => Some(RequestMessage {
+                role: "user",
+                content: text,
+            }),
+            Block::AssistantText { text } => Some(RequestMessage {
+                role: "assistant",
+                content: text,
+            }),
+            Block::SkillInvocation { .. } => None,
+            Block::ToolUse { .. } | Block::ToolResult { .. } => {
+                debug_assert!(false, "v1 single-shot path does not handle tool blocks");
+                None
+            }
+        })
+        .collect()
+}
+
 pub async fn stream(
     client: &Client,
     key: &str,
     model: &str,
-    messages: &[Message],
+    blocks: &[Block],
     system: &str,
 ) -> Result<impl Stream<Item = Result<String, ProviderError>>, ProviderError> {
-    let mut req_messages = Vec::with_capacity(messages.len() + 1);
+    let mut req_messages = Vec::with_capacity(blocks.len() + 1);
     req_messages.push(RequestMessage {
         role: "system",
         content: system,
     });
-    for m in messages {
-        req_messages.push(RequestMessage {
-            role: match m.role {
-                Role::User => "user",
-                Role::Assistant => "assistant",
-            },
-            content: &m.content,
-        });
-    }
+    req_messages.extend(blocks_to_v1_messages(blocks));
 
     let body = RequestBody {
         model,
@@ -170,7 +186,6 @@ fn friendly_message(code: u16, body: &str) -> String {
 }
 
 use crate::{ProviderEvent, StopReason};
-use adsum_state::Block;
 use adsum_tools::ToolSchema;
 
 #[allow(dead_code)]

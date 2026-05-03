@@ -116,26 +116,23 @@ impl Chatbox {
                 (s.default_model.clone(), key)
             };
 
-            // 2. Snapshot the messages-so-far + push the new user message.
-            let messages = {
-                let st = self.state.lock().unwrap();
-                let mut msgs = st
-                    .current_session()
-                    .map(|s| s.messages_for_llm())
-                    .unwrap_or_default();
-                msgs.push(adsum_state::Message {
-                    role: adsum_state::Role::User,
-                    content: self.current_text.clone(),
-                });
-                msgs
-            };
-
-            // 3. Push InProgress turn into AppState.
+            // 2. Push InProgress turn into AppState. begin_turn appends a
+            //    Block::UserText for the new user message into the in-flight
+            //    turn, so blocks_for_llm() already includes it — no manual
+            //    push needed here (would cause a duplicate).
             let user_text = std::mem::take(&mut self.current_text);
             self.state
                 .lock()
                 .unwrap()
                 .begin_turn(user_text, model.clone());
+
+            // 3. Snapshot the full block list for this request.
+            let blocks: Vec<adsum_state::Block> = {
+                let st = self.state.lock().unwrap();
+                st.current_session()
+                    .map(|s| s.blocks_for_llm())
+                    .unwrap_or_default()
+            };
 
             // 4. Open the conversation window if needed.
             let conv_handle = *self.conversation_slot.lock().unwrap();
@@ -153,10 +150,10 @@ impl Chatbox {
             let cancel = CancellationToken::new();
             let (chunks_tx, chunks_rx) = async_channel::unbounded::<adsum_llm::LlmChunk>();
             self.llm.send(adsum_llm::LlmRequest {
-                messages,
+                blocks,
                 model,
                 api_key,
-                system: adsum_llm::SYSTEM_PROMPT,
+                system: adsum_llm::SYSTEM_PROMPT.to_string(),
                 chunks_tx,
                 cancel: cancel.clone(),
             });
