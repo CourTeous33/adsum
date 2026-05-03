@@ -180,6 +180,32 @@ impl Chatbox {
                             let mut st = state.lock().unwrap();
                             match chunk {
                                 adsum_llm::LlmChunk::Text(t) => st.append_chunk(&t),
+                                adsum_llm::LlmChunk::ToolUse { id, name, input } => {
+                                    if let Some(session) = st.current_session_mut() {
+                                        if let Some(turn) = session.turns.last_mut() {
+                                            turn.blocks.push(adsum_state::Block::ToolUse {
+                                                id,
+                                                name,
+                                                input,
+                                            });
+                                        }
+                                    }
+                                }
+                                adsum_llm::LlmChunk::ToolResult {
+                                    tool_use_id,
+                                    content,
+                                    is_error,
+                                } => {
+                                    if let Some(session) = st.current_session_mut() {
+                                        if let Some(turn) = session.turns.last_mut() {
+                                            turn.blocks.push(adsum_state::Block::ToolResult {
+                                                tool_use_id,
+                                                content,
+                                                is_error,
+                                            });
+                                        }
+                                    }
+                                }
                                 adsum_llm::LlmChunk::Done => {
                                     st.finalize_turn(adsum_state::TurnKind::Ok)
                                 }

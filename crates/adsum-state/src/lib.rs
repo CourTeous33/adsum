@@ -46,18 +46,6 @@ pub enum TurnKind {
     Error { code: String, message: String },
 }
 
-#[derive(Debug, Clone)]
-pub enum Role {
-    User,
-    Assistant,
-}
-
-#[derive(Debug, Clone)]
-pub struct Message {
-    pub role: Role,
-    pub content: String,
-}
-
 /// A single semantic chunk of a turn. Turns are sequences of blocks; v2
 /// persistence stores them in order. The `(ToolUse.id, ToolResult.tool_use_id)`
 /// pair matches calls to results in the transcript.
@@ -126,40 +114,6 @@ impl Session {
             .collect()
     }
 
-    /// Build the message list for the next LLM call. Drops turns that don't
-    /// have usable assistant content (Error always; Cancelled with empty
-    /// assistant_text). The current InProgress turn (if any) contributes
-    /// only its user_text — the model never sees its own partial output as
-    /// "assistant" history.
-    #[deprecated(note = "use Session::blocks_for_llm() — removed in Task 14")]
-    pub fn messages_for_llm(&self) -> Vec<Message> {
-        let mut out = Vec::new();
-        for turn in &self.turns {
-            let user_text = turn.user_text_block().unwrap_or("").to_string();
-            let assistant_text = turn.final_assistant_text();
-            match &turn.kind {
-                TurnKind::Error { .. } => continue,
-                TurnKind::Cancelled if assistant_text.is_empty() => continue,
-                TurnKind::InProgress => {
-                    out.push(Message {
-                        role: Role::User,
-                        content: user_text,
-                    });
-                }
-                TurnKind::Ok | TurnKind::Cancelled => {
-                    out.push(Message {
-                        role: Role::User,
-                        content: user_text,
-                    });
-                    out.push(Message {
-                        role: Role::Assistant,
-                        content: assistant_text,
-                    });
-                }
-            }
-        }
-        out
-    }
 }
 
 impl Default for Session {

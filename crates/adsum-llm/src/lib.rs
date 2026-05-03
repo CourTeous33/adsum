@@ -1,6 +1,7 @@
 //! LLM service actor: owns a tokio Runtime on a dedicated thread,
-//! receives `LlmRequest`s over an `async_channel`, dispatches to per-provider
-//! streaming functions, and emits `LlmChunk`s back over the request's
+//! receives `LlmRequest`s over an `async_channel`, and dispatches each one to
+//! the agent loop in `agent::handle_request`. The loop iteratively calls the
+//! provider, dispatches tools, and emits `LlmChunk`s back over the request's
 //! `chunks_tx`.
 //!
 //! The boundary between this crate and the GPUI side is `async_channel`,
@@ -11,6 +12,7 @@ use adsum_state::Block;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
+mod agent;
 mod anthropic;
 mod event;
 mod openai;
@@ -33,8 +35,21 @@ pub struct LlmRequest {
 #[derive(Debug, Clone)]
 pub enum LlmChunk {
     Text(String),
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+        is_error: bool,
+    },
     Done,
-    Error { code: String, message: String },
+    Error {
+        code: String,
+        message: String,
+    },
 }
 
 pub struct LlmService {
@@ -50,9 +65,7 @@ pub struct LlmService {
     /// drop — intentional for app-exit teardown.
     #[allow(dead_code)]
     runtime: tokio::runtime::Runtime,
-    /// Stashed for Task 14, when the agent loop will start consuming it.
-    /// Today: registered but unused — the single-shot `handle_request` body
-    /// hasn't been replaced yet.
+    /// Stashed so each dispatched request gets a clone for the agent loop.
     #[allow(dead_code)]
     registry: Arc<adsum_tools::ToolRegistry>,
 }
@@ -80,6 +93,7 @@ impl LlmService {
             .expect("build tokio runtime");
 
         let handle = runtime.handle().clone();
+        let registry_clone = registry.clone();
         let worker = std::thread::Builder::new()
             .name("adsum-llm-dispatcher".into())
             .spawn(move || {
@@ -87,7 +101,8 @@ impl LlmService {
                     let client = reqwest::Client::new();
                     while let Ok(req) = request_rx.recv().await {
                         let client = client.clone();
-                        tokio::spawn(handle_request(client, req));
+                        let registry = registry_clone.clone();
+                        tokio::spawn(crate::agent::handle_request(client, registry, req));
                     }
                 });
             })
@@ -155,81 +170,6 @@ static SUPPORTED_MODELS: std::sync::LazyLock<Vec<(&'static str, ModelId)>> =
         ]
     });
 
-async fn handle_request(client: reqwest::Client, req: LlmRequest) {
-    if req.api_key.is_empty() {
-        let provider_name = match req.model.provider {
-            Provider::Anthropic => "Anthropic",
-            Provider::OpenAI => "OpenAI",
-        };
-        emit(
-            &req.chunks_tx,
-            LlmChunk::Error {
-                code: "no_key".into(),
-                message: format!("No API key configured for {provider_name}. Add one in Settings."),
-            },
-        )
-        .await;
-        return;
-    }
-
-    use futures_util::StreamExt;
-    type ChunkStream =
-        std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<String, ProviderError>> + Send>>;
-    let stream_result: Result<ChunkStream, ProviderError> = match req.model.provider {
-        Provider::Anthropic => anthropic::stream(
-            &client,
-            &req.api_key,
-            &req.model.name,
-            &req.blocks,
-            &req.system,
-        )
-        .await
-        .map(|s| Box::pin(s) as ChunkStream),
-        Provider::OpenAI => openai::stream(
-            &client,
-            &req.api_key,
-            &req.model.name,
-            &req.blocks,
-            &req.system,
-        )
-        .await
-        .map(|s| Box::pin(s) as ChunkStream),
-    };
-
-    let mut stream = match stream_result {
-        Ok(s) => s,
-        Err(provider_err) => {
-            emit(&req.chunks_tx, provider_err.into_chunk()).await;
-            return;
-        }
-    };
-
-    loop {
-        tokio::select! {
-            _ = req.cancel.cancelled() => break,
-            next = stream.next() => match next {
-                Some(Ok(text)) => emit(&req.chunks_tx, LlmChunk::Text(text)).await,
-                Some(Err(e)) => {
-                    emit(&req.chunks_tx, e.into_chunk()).await;
-                    return;
-                }
-                None => {
-                    emit(&req.chunks_tx, LlmChunk::Done).await;
-                    return;
-                }
-            }
-        }
-    }
-    // Cancellation path: don't emit anything; the chatbox finalizes locally.
-}
-
-async fn emit(tx: &async_channel::Sender<LlmChunk>, chunk: LlmChunk) {
-    if let Err(err) = tx.send(chunk).await {
-        // Receiver dropped — the chatbox closed. Nothing to do.
-        let _ = err;
-    }
-}
-
 #[derive(Debug)]
 pub struct ProviderError {
     pub code: String,
@@ -248,7 +188,6 @@ impl ProviderError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use adsum_state::Block;
 
     #[test]
     fn supported_models_lists_five_models() {
@@ -269,70 +208,5 @@ mod tests {
             "default model {} not in supported_models()",
             default.name
         );
-    }
-
-    #[test]
-    fn no_key_emits_error_chunk_without_http() {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let (tx, rx) = async_channel::unbounded::<LlmChunk>();
-        let req = LlmRequest {
-            blocks: vec![Block::UserText { text: "hi".into() }],
-            model: ModelId {
-                provider: Provider::Anthropic,
-                name: "claude-sonnet-4-6".into(),
-            },
-            api_key: String::new(),
-            system: SYSTEM_PROMPT.to_string(),
-            chunks_tx: tx,
-            cancel: CancellationToken::new(),
-        };
-        rt.block_on(async {
-            handle_request(reqwest::Client::new(), req).await;
-        });
-        let chunk = rx.try_recv().expect("expected one chunk");
-        match chunk {
-            LlmChunk::Error { code, message } => {
-                assert_eq!(code, "no_key");
-                assert!(message.contains("Anthropic"));
-                assert!(message.contains("Settings"));
-            }
-            other => panic!("expected Error, got {other:?}"),
-        }
-        assert!(rx.try_recv().is_err(), "no further chunks expected");
-    }
-
-    #[test]
-    fn cancellation_during_handle_request_aborts_quickly() {
-        // We can't talk to a real provider in CI. Instead, drive
-        // handle_request through the no_key path and verify cancel
-        // ordering is a no-op on the synchronous error path.
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let (tx, rx) = async_channel::unbounded::<LlmChunk>();
-        let cancel = CancellationToken::new();
-        cancel.cancel(); // pre-cancelled
-
-        let req = LlmRequest {
-            blocks: vec![],
-            model: ModelId {
-                provider: Provider::Anthropic,
-                name: "claude-sonnet-4-6".into(),
-            },
-            api_key: String::new(), // forces no_key short-circuit
-            system: SYSTEM_PROMPT.to_string(),
-            chunks_tx: tx,
-            cancel,
-        };
-        rt.block_on(async {
-            handle_request(reqwest::Client::new(), req).await;
-        });
-        // Even pre-cancelled, the no_key path emits its error before checking cancel.
-        let chunk = rx.try_recv().expect("expected one chunk");
-        assert!(matches!(chunk, LlmChunk::Error { .. }));
     }
 }

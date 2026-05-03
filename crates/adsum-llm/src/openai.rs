@@ -3,10 +3,12 @@
 //! Endpoint: POST https://api.openai.com/v1/chat/completions
 //! Auth: Authorization: Bearer <key>
 //! Streaming: SSE; each `data:` line is a JSON envelope. The terminator is
-//! the literal `data: [DONE]` line.
+//! the literal `data: [DONE]` line. The agent loop consumes provider-events:
+//! content/tool_call deltas, finish_reason.
 
-use crate::ProviderError;
+use crate::{ProviderError, ProviderEvent, StopReason};
 use adsum_state::Block;
+use adsum_tools::ToolSchema;
 use eventsource_stream::Eventsource;
 use futures_util::{Stream, StreamExt};
 use reqwest::Client;
@@ -15,190 +17,16 @@ use serde::{Deserialize, Serialize};
 const ENDPOINT: &str = "https://api.openai.com/v1/chat/completions";
 
 #[derive(Serialize)]
-struct RequestBody<'a> {
-    model: &'a str,
-    messages: Vec<RequestMessage<'a>>,
-    stream: bool,
-}
-
-#[derive(Serialize)]
-struct RequestMessage<'a> {
-    role: &'static str,
-    content: &'a str,
-}
-
-/// Translate `&[Block]` into the existing single-shot wire format that
-/// `stream()` already sends. Skips `Block::SkillInvocation`. Tool blocks
-/// don't appear in this single-shot path; they trigger a `debug_assert!`.
-fn blocks_to_v1_messages(blocks: &[Block]) -> Vec<RequestMessage<'_>> {
-    blocks
-        .iter()
-        .filter_map(|b| match b {
-            Block::UserText { text } => Some(RequestMessage {
-                role: "user",
-                content: text,
-            }),
-            Block::AssistantText { text } => Some(RequestMessage {
-                role: "assistant",
-                content: text,
-            }),
-            Block::SkillInvocation { .. } => None,
-            Block::ToolUse { .. } | Block::ToolResult { .. } => {
-                debug_assert!(false, "v1 single-shot path does not handle tool blocks");
-                None
-            }
-        })
-        .collect()
-}
-
-pub async fn stream(
-    client: &Client,
-    key: &str,
-    model: &str,
-    blocks: &[Block],
-    system: &str,
-) -> Result<impl Stream<Item = Result<String, ProviderError>>, ProviderError> {
-    let mut req_messages = Vec::with_capacity(blocks.len() + 1);
-    req_messages.push(RequestMessage {
-        role: "system",
-        content: system,
-    });
-    req_messages.extend(blocks_to_v1_messages(blocks));
-
-    let body = RequestBody {
-        model,
-        messages: req_messages,
-        stream: true,
-    };
-
-    let response = client
-        .post(ENDPOINT)
-        .bearer_auth(key)
-        .header("content-type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| ProviderError {
-            code: classify_reqwest_error(&e),
-            message: e.to_string(),
-        })?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let text = response.text().await.unwrap_or_default();
-        return Err(ProviderError {
-            code: classify_status(status.as_u16()),
-            message: friendly_message(status.as_u16(), &text),
-        });
-    }
-
-    Ok(parse_event_stream(response.bytes_stream().eventsource()))
-}
-
-fn parse_event_stream<S>(events: S) -> impl Stream<Item = Result<String, ProviderError>>
-where
-    S: Stream<
-            Item = Result<
-                eventsource_stream::Event,
-                eventsource_stream::EventStreamError<reqwest::Error>,
-            >,
-        > + Unpin,
-{
-    use futures_util::stream::unfold;
-    unfold(events, |mut events| async move {
-        loop {
-            match events.next().await {
-                None => return None,
-                Some(Err(e)) => {
-                    return Some((
-                        Err(ProviderError {
-                            code: "decode".into(),
-                            message: format!("Failed to parse stream from OpenAI: {e}"),
-                        }),
-                        events,
-                    ));
-                }
-                Some(Ok(event)) => {
-                    if event.data.trim() == "[DONE]" {
-                        return None;
-                    }
-                    if let Some(text) = parse_openai_data(&event.data) {
-                        return Some((Ok(text), events));
-                    }
-                    // Non-text chunk (role-only delta, finish_reason, etc.) — loop.
-                }
-            }
-        }
-    })
-}
-
-#[derive(Deserialize)]
-struct ChunkEnvelope {
-    choices: Vec<ChunkChoice>,
-}
-
-#[derive(Deserialize)]
-struct ChunkChoice {
-    delta: ChunkDelta,
-}
-
-#[derive(Deserialize)]
-struct ChunkDelta {
-    #[serde(default)]
-    content: Option<String>,
-}
-
-/// Parse the JSON `data:` payload of one OpenAI chat-completion stream event.
-/// Returns the `choices[0].delta.content` string, or None if the chunk has no
-/// content (e.g. role-only delta, tool-call delta, finish chunk).
-pub(crate) fn parse_openai_data(data: &str) -> Option<String> {
-    let envelope: ChunkEnvelope = serde_json::from_str(data).ok()?;
-    let choice = envelope.choices.into_iter().next()?;
-    choice.delta.content.filter(|s| !s.is_empty())
-}
-
-fn classify_status(code: u16) -> String {
-    match code {
-        401 | 403 => code.to_string(),
-        429 => "rate_limited".into(),
-        500..=599 => "5xx".into(),
-        _ => code.to_string(),
-    }
-}
-
-fn classify_reqwest_error(e: &reqwest::Error) -> String {
-    if e.is_timeout() || e.is_connect() {
-        "network".into()
-    } else if e.is_decode() {
-        "decode".into()
-    } else {
-        "network".into()
-    }
-}
-
-fn friendly_message(code: u16, body: &str) -> String {
-    match code {
-        401 | 403 => "Invalid API key — check Settings".into(),
-        429 => "Rate limited by OpenAI. Try again shortly.".into(),
-        500..=599 => format!("OpenAI returned {code}: {body}"),
-        _ => format!("HTTP {code}: {body}"),
-    }
-}
-
-use crate::{ProviderEvent, StopReason};
-use adsum_tools::ToolSchema;
-
-#[allow(dead_code)]
-#[derive(Serialize)]
 struct OwnedAgentRequestBody {
     model: String,
     messages: Vec<OwnedAgentMessage>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<OwnedAgentToolDef>,
-    tool_choice: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<&'static str>,
     stream: bool,
 }
 
-#[allow(dead_code)]
 #[derive(Serialize)]
 pub(crate) struct OwnedAgentMessage {
     pub role: &'static str,
@@ -210,7 +38,6 @@ pub(crate) struct OwnedAgentMessage {
     pub tool_call_id: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Serialize)]
 pub(crate) struct OwnedAgentToolCall {
     pub id: String,
@@ -219,14 +46,12 @@ pub(crate) struct OwnedAgentToolCall {
     pub function: OwnedAgentToolCallFn,
 }
 
-#[allow(dead_code)]
 #[derive(Serialize)]
 pub(crate) struct OwnedAgentToolCallFn {
     pub name: String,
     pub arguments: String,
 }
 
-#[allow(dead_code)]
 #[derive(Serialize)]
 struct OwnedAgentToolDef {
     #[serde(rename = "type")]
@@ -234,7 +59,6 @@ struct OwnedAgentToolDef {
     function: OwnedAgentToolDefFn,
 }
 
-#[allow(dead_code)]
 #[derive(Serialize)]
 struct OwnedAgentToolDefFn {
     name: String,
@@ -242,7 +66,6 @@ struct OwnedAgentToolDefFn {
     parameters: serde_json::Value,
 }
 
-#[allow(dead_code)]
 pub(crate) fn blocks_to_openai_messages(blocks: &[Block], system: &str) -> Vec<OwnedAgentMessage> {
     let mut out = vec![OwnedAgentMessage {
         role: "system",
@@ -277,7 +100,11 @@ pub(crate) fn blocks_to_openai_messages(blocks: &[Block], system: &str) -> Vec<O
                 }],
                 tool_call_id: None,
             }),
-            Block::ToolResult { tool_use_id, content, is_error } => {
+            Block::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } => {
                 let content_str = if *is_error {
                     format!("[error] {content}")
                 } else {
@@ -297,7 +124,6 @@ pub(crate) fn blocks_to_openai_messages(blocks: &[Block], system: &str) -> Vec<O
 }
 
 /// Open an SSE stream against OpenAI's Chat Completions API with tool support.
-#[allow(dead_code)]
 pub async fn agent_stream(
     client: &Client,
     key: &str,
@@ -319,11 +145,16 @@ pub async fn agent_stream(
         })
         .collect();
 
+    let tool_choice = if tool_defs.is_empty() {
+        None
+    } else {
+        Some("auto")
+    };
     let body = OwnedAgentRequestBody {
         model: model.to_string(),
         messages,
         tools: tool_defs,
-        tool_choice: "auto",
+        tool_choice,
         stream: true,
     };
 
@@ -351,7 +182,6 @@ pub async fn agent_stream(
     Ok(parse_provider_event_stream(response.bytes_stream().eventsource()))
 }
 
-#[allow(dead_code)]
 fn parse_provider_event_stream<S>(
     events: S,
 ) -> impl Stream<Item = Result<ProviderEvent, ProviderError>>
@@ -397,13 +227,11 @@ where
     })
 }
 
-#[allow(dead_code)]
 #[derive(Deserialize)]
 struct ProviderChunkEnvelope {
     choices: Vec<ProviderChunkChoice>,
 }
 
-#[allow(dead_code)]
 #[derive(Deserialize)]
 struct ProviderChunkChoice {
     delta: ProviderChunkDelta,
@@ -411,7 +239,6 @@ struct ProviderChunkChoice {
     finish_reason: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Deserialize)]
 struct ProviderChunkDelta {
     #[serde(default)]
@@ -420,7 +247,6 @@ struct ProviderChunkDelta {
     tool_calls: Vec<ProviderToolCallDelta>,
 }
 
-#[allow(dead_code)]
 #[derive(Deserialize)]
 struct ProviderToolCallDelta {
     #[serde(default)]
@@ -429,7 +255,6 @@ struct ProviderToolCallDelta {
     function: Option<ProviderToolCallFnDelta>,
 }
 
-#[allow(dead_code)]
 #[derive(Deserialize)]
 struct ProviderToolCallFnDelta {
     #[serde(default)]
@@ -459,7 +284,10 @@ pub(crate) fn parse_openai_provider_events(data: &str) -> Vec<ProviderEvent> {
     for tc in choice.delta.tool_calls {
         let function = tc
             .function
-            .unwrap_or(ProviderToolCallFnDelta { name: None, arguments: None });
+            .unwrap_or(ProviderToolCallFnDelta {
+                name: None,
+                arguments: None,
+            });
         if let (Some(id), Some(name)) = (tc.id, function.name) {
             out.push(ProviderEvent::ToolUseStart { id, name });
         }
@@ -484,43 +312,37 @@ pub(crate) fn parse_openai_provider_events(data: &str) -> Vec<ProviderEvent> {
     out
 }
 
+fn classify_status(code: u16) -> String {
+    match code {
+        401 | 403 => code.to_string(),
+        429 => "rate_limited".into(),
+        500..=599 => "5xx".into(),
+        _ => code.to_string(),
+    }
+}
+
+fn classify_reqwest_error(e: &reqwest::Error) -> String {
+    if e.is_timeout() || e.is_connect() {
+        "network".into()
+    } else if e.is_decode() {
+        "decode".into()
+    } else {
+        "network".into()
+    }
+}
+
+fn friendly_message(code: u16, body: &str) -> String {
+    match code {
+        401 | 403 => "Invalid API key — check Settings".into(),
+        429 => "Rate limited by OpenAI. Try again shortly.".into(),
+        500..=599 => format!("OpenAI returned {code}: {body}"),
+        _ => format!("HTTP {code}: {body}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_content_delta_yields_text() {
-        let data = r#"{"id":"x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"}}]}"#;
-        let got = parse_openai_data(data);
-        assert_eq!(got.as_deref(), Some("Hello"));
-    }
-
-    #[test]
-    fn parse_role_only_delta_returns_none() {
-        let data = r#"{"choices":[{"index":0,"delta":{"role":"assistant"}}]}"#;
-        let got = parse_openai_data(data);
-        assert_eq!(got, None);
-    }
-
-    #[test]
-    fn parse_finish_chunk_returns_none() {
-        let data = r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#;
-        let got = parse_openai_data(data);
-        assert_eq!(got, None);
-    }
-
-    #[test]
-    fn parse_empty_content_returns_none() {
-        let data = r#"{"choices":[{"index":0,"delta":{"content":""}}]}"#;
-        let got = parse_openai_data(data);
-        assert_eq!(got, None);
-    }
-
-    #[test]
-    fn parse_malformed_returns_none() {
-        assert_eq!(parse_openai_data("not json"), None);
-        assert_eq!(parse_openai_data(r#"{"foo":"bar"}"#), None);
-    }
 
     #[test]
     fn parse_openai_tool_call_start_yields_tool_use_start() {
@@ -533,7 +355,9 @@ mod tests {
     fn parse_openai_tool_call_args_yields_tool_use_input_delta() {
         let data = r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"slug\":\"foo\"}"}}]}}]}"#;
         let evs = parse_openai_provider_events(data);
-        assert!(evs.iter().any(|e| matches!(e, crate::ProviderEvent::ToolUseInputDelta(s) if s == "{\"slug\":\"foo\"}")));
+        assert!(evs.iter().any(
+            |e| matches!(e, crate::ProviderEvent::ToolUseInputDelta(s) if s == "{\"slug\":\"foo\"}")
+        ));
     }
 
     #[test]
