@@ -7,14 +7,32 @@ pub use adsum_settings::{ModelId, Provider};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Session {
+    /// Persistence schema version. Always 2 in memory; v1 files (no field
+    /// present) are migrated on load. Bump on shape changes; old loaders
+    /// reject unknown future versions.
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
     pub id: String,
     pub created_at: SystemTime,
     pub turns: Vec<Turn>,
 }
 
+fn default_schema_version() -> u32 {
+    1 // older files lacked the field; default to 1 here so the loader can detect + migrate
+}
+
+pub const KNOWN_SCHEMA_VERSION: u32 = 2;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Turn {
+    /// Block sequence. Source of truth for v2.
+    #[serde(default)]
+    pub blocks: Vec<Block>,
+    /// LEGACY (v1 compat). Populated alongside `blocks` until Task 4 drops them.
+    #[serde(default)]
     pub user_text: String,
+    /// LEGACY (v1 compat). Populated alongside `blocks` until Task 4 drops them.
+    #[serde(default)]
     pub assistant_text: String,
     pub kind: TurnKind,
     pub model: ModelId,
@@ -73,6 +91,7 @@ pub enum Block {
 impl Session {
     pub fn new() -> Self {
         Self {
+            schema_version: KNOWN_SCHEMA_VERSION,
             id: uuid::Uuid::new_v4().to_string(),
             created_at: SystemTime::now(),
             turns: Vec::new(),
@@ -170,6 +189,7 @@ impl AppState {
     pub fn begin_turn(&mut self, user_text: String, model: ModelId) -> Option<usize> {
         let session = self.current_session.as_mut()?;
         session.turns.push(Turn {
+            blocks: vec![Block::UserText { text: user_text.clone() }],
             user_text,
             assistant_text: String::new(),
             kind: TurnKind::InProgress,
@@ -192,6 +212,10 @@ impl AppState {
             return;
         }
         turn.assistant_text.push_str(chunk);
+        match turn.blocks.last_mut() {
+            Some(Block::AssistantText { text }) => text.push_str(chunk),
+            _ => turn.blocks.push(Block::AssistantText { text: chunk.to_string() }),
+        }
     }
 
     /// Mark the most recent turn as finished. No-op if no session exists,

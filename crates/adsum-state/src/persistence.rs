@@ -41,8 +41,53 @@ pub fn save_session(session: &Session) -> io::Result<()> {
 pub fn load_session_from(dir: &std::path::Path, id: &str) -> io::Result<Session> {
     let path = dir.join(format!("{id}.json"));
     let json = std::fs::read_to_string(path)?;
-    serde_json::from_str(&json)
+    parse_session_json(&json)
         .map_err(|e| io::Error::other(format!("deserialize session {id}: {e}")))
+}
+
+/// Parse a session JSON string, applying v1→v2 migration if necessary.
+/// Public-in-crate so tests can drive it directly.
+pub(crate) fn parse_session_json(json: &str) -> Result<Session, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| e.to_string())?;
+    let version = value
+        .get("schema_version")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1) as u32;
+
+    if version > crate::KNOWN_SCHEMA_VERSION {
+        return Err(format!(
+            "schema_version {version} is newer than supported ({})",
+            crate::KNOWN_SCHEMA_VERSION
+        ));
+    }
+
+    if version == crate::KNOWN_SCHEMA_VERSION {
+        return serde_json::from_value(value).map_err(|e| e.to_string());
+    }
+
+    // v1 → v2 migration. Decode as the v1 shape (legacy fields only) then
+    // synthesize Block sequences from user_text/assistant_text.
+    let mut session: Session =
+        serde_json::from_value(value).map_err(|e| e.to_string())?;
+    session.schema_version = crate::KNOWN_SCHEMA_VERSION;
+    for turn in session.turns.iter_mut() {
+        // Synthesize blocks from legacy fields. Only run when blocks is empty
+        // (v1 files); v2 files would already have populated blocks above.
+        if turn.blocks.is_empty() {
+            if !turn.user_text.is_empty() {
+                turn.blocks.push(crate::Block::UserText {
+                    text: turn.user_text.clone(),
+                });
+            }
+            if !turn.assistant_text.is_empty() {
+                turn.blocks.push(crate::Block::AssistantText {
+                    text: turn.assistant_text.clone(),
+                });
+            }
+        }
+    }
+    Ok(session)
 }
 
 pub fn load_session(id: &str) -> io::Result<Session> {

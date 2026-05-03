@@ -16,6 +16,10 @@ fn fixed_session(id: &str, turn_count: usize, t: u64) -> Session {
     let created = SystemTime::UNIX_EPOCH + Duration::from_secs(t);
     let turns = (0..turn_count)
         .map(|i| Turn {
+            blocks: vec![
+                adsum_state::Block::UserText { text: format!("query {i}") },
+                adsum_state::Block::AssistantText { text: format!("echo: query {i}") },
+            ],
             user_text: format!("query {i}"),
             assistant_text: format!("echo: query {i}"),
             kind: TurnKind::Ok,
@@ -24,6 +28,7 @@ fn fixed_session(id: &str, turn_count: usize, t: u64) -> Session {
         })
         .collect();
     Session {
+        schema_version: adsum_state::KNOWN_SCHEMA_VERSION,
         id: id.to_string(),
         created_at: created,
         turns,
@@ -91,4 +96,77 @@ fn load_all_sessions_returns_empty_when_dir_missing() {
 #[allow(dead_code)]
 fn _assert_summary_type(s: SessionSummary) -> SessionSummary {
     s
+}
+
+#[test]
+fn loads_v1_session_and_migrates_blocks_in_memory() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/v1_session.json"),
+    )
+    .unwrap();
+    let path = dir.path().join("00000000-0000-0000-0000-000000000001.json");
+    std::fs::write(&path, &fixture).unwrap();
+
+    let session = adsum_state::persistence::load_session_from(
+        dir.path(),
+        "00000000-0000-0000-0000-000000000001",
+    )
+    .unwrap();
+
+    assert_eq!(session.schema_version, 2);
+    assert_eq!(session.turns.len(), 1);
+    let turn = &session.turns[0];
+    assert_eq!(turn.blocks.len(), 2);
+    assert!(matches!(
+        &turn.blocks[0],
+        adsum_state::Block::UserText { text } if text == "hello"
+    ));
+    assert!(matches!(
+        &turn.blocks[1],
+        adsum_state::Block::AssistantText { text } if text == "hi back"
+    ));
+    // Legacy-field accessors still work (read off the populated fields).
+    assert_eq!(turn.user_text, "hello");
+    assert_eq!(turn.assistant_text, "hi back");
+}
+
+#[test]
+fn loads_v1_session_with_empty_assistant_text_skips_assistant_block() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = r#"{
+        "id": "x",
+        "created_at": { "secs_since_epoch": 1, "nanos_since_epoch": 0 },
+        "turns": [{
+            "user_text": "hi",
+            "assistant_text": "",
+            "kind": "Cancelled",
+            "model": { "provider": "Anthropic", "name": "claude-sonnet-4-6" },
+            "timestamp": { "secs_since_epoch": 2, "nanos_since_epoch": 0 }
+        }]
+    }"#;
+    std::fs::write(dir.path().join("x.json"), json).unwrap();
+
+    let session = adsum_state::persistence::load_session_from(dir.path(), "x").unwrap();
+    assert_eq!(session.turns[0].blocks.len(), 1);
+    assert!(matches!(
+        &session.turns[0].blocks[0],
+        adsum_state::Block::UserText { .. }
+    ));
+}
+
+#[test]
+fn rejects_session_with_schema_version_above_known() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = r#"{
+        "schema_version": 99,
+        "id": "x",
+        "created_at": { "secs_since_epoch": 1, "nanos_since_epoch": 0 },
+        "turns": []
+    }"#;
+    std::fs::write(dir.path().join("x.json"), json).unwrap();
+
+    let err = adsum_state::persistence::load_session_from(dir.path(), "x").unwrap_err();
+    assert!(err.to_string().contains("schema_version"));
 }

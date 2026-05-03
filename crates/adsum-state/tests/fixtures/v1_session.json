@@ -1,0 +1,13 @@
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "created_at": { "secs_since_epoch": 1714597000, "nanos_since_epoch": 0 },
+  "turns": [
+    {
+      "user_text": "hello",
+      "assistant_text": "hi back",
+      "kind": "Ok",
+      "model": { "provider": "Anthropic", "name": "claude-sonnet-4-6" },
+      "timestamp": { "secs_since_epoch": 1714597001, "nanos_since_epoch": 0 }
+    }
+  ]
+}
