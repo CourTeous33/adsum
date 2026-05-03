@@ -125,9 +125,10 @@ impl Session {
         let mut out = Vec::new();
         for turn in &self.turns {
             let user_text = turn.user_text_block().unwrap_or("").to_string();
+            let assistant_text = turn.final_assistant_text();
             match &turn.kind {
                 TurnKind::Error { .. } => continue,
-                TurnKind::Cancelled if turn.final_assistant_text().is_empty() => continue,
+                TurnKind::Cancelled if assistant_text.is_empty() => continue,
                 TurnKind::InProgress => {
                     out.push(Message {
                         role: Role::User,
@@ -135,14 +136,13 @@ impl Session {
                     });
                 }
                 TurnKind::Ok | TurnKind::Cancelled => {
-                    let assistant = turn.final_assistant_text();
                     out.push(Message {
                         role: Role::User,
                         content: user_text,
                     });
                     out.push(Message {
                         role: Role::Assistant,
-                        content: assistant,
+                        content: assistant_text,
                     });
                 }
             }
