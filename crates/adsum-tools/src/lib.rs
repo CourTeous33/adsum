@@ -8,6 +8,16 @@
 
 mod registry;
 mod stub;
+mod web_fetch;
+mod wiki_grep;
+mod wiki_list;
+mod wiki_read;
+mod wiki_write;
 
 pub use registry::{Tool, ToolError, ToolRegistry, ToolSchema};
 pub use stub::StubTool;
+pub use web_fetch::WebFetchTool;
+pub use wiki_grep::WikiGrepTool;
+pub use wiki_list::WikiListTool;
+pub use wiki_read::WikiReadTool;
+pub use wiki_write::WikiWriteTool;
