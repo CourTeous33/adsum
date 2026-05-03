@@ -130,6 +130,16 @@ impl Chatbox {
             cx.quit();
             return;
         }
+        // cmd+v paste: read clipboard text and append to the input.
+        if key == "v" && modifiers.platform {
+            if let Some(item) = cx.read_from_clipboard() {
+                if let Some(text) = item.text() {
+                    self.current_text.push_str(&text);
+                    cx.notify();
+                }
+            }
+            return;
+        }
         if modifiers.platform || modifiers.control || modifiers.alt {
             return;
         }
