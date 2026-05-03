@@ -145,6 +145,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "adsum-tools"
+version = "0.1.2"
+dependencies = [
+ "adsum-wiki",
+ "async-trait",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "adsum-wiki"
 version = "0.1.2"
 dependencies = [
