@@ -5,8 +5,12 @@
 //! Real markdown rendering is the next spec; v1 is intentionally raw.
 
 use adsum_wiki::{PageMeta, WikiError, WikiStore};
-use gpui::{div, prelude::*, px, AnyElement, Context, MouseButton};
+use gpui::{
+    div, prelude::*, px, svg, AnyElement, Context, FocusHandle, KeyDownEvent, MouseButton, Task,
+    Window,
+};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Selection {
@@ -31,7 +35,6 @@ enum RowMode {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 enum HeaderMode {
     Idle,
     Creating { draft: String, error: Option<String> },
@@ -44,13 +47,16 @@ pub struct WikisView {
     content: Result<String, ContentError>,
     row_mode: RowMode,
     header_mode: HeaderMode,
+    create_focus: FocusHandle,
+    caret_visible: bool,
+    blink_task: Option<Task<()>>,
 }
 
 #[derive(Debug, Clone)]
 struct ContentError(String);
 
 impl WikisView {
-    pub fn new(wiki: Arc<Mutex<WikiStore>>) -> Self {
+    pub fn new(wiki: Arc<Mutex<WikiStore>>, cx: &mut Context<crate::Dashboard>) -> Self {
         let pages = list_or_log_err(&wiki);
         let content = read_for(&wiki, &Selection::Index);
         Self {
@@ -60,6 +66,9 @@ impl WikisView {
             content,
             row_mode: RowMode::Idle,
             header_mode: HeaderMode::Idle,
+            create_focus: cx.focus_handle(),
+            caret_visible: true,
+            blink_task: None,
         }
     }
 
@@ -72,6 +81,7 @@ impl WikisView {
         self.content = read_for(&self.wiki, &self.selection);
         self.row_mode = RowMode::Idle;
         self.header_mode = HeaderMode::Idle;
+        self.blink_task = None;
     }
 
     fn select(&mut self, sel: Selection, cx: &mut Context<crate::Dashboard>) {
@@ -83,11 +93,183 @@ impl WikisView {
         cx.notify();
     }
 
+    fn start_create(&mut self, window: &mut Window, cx: &mut Context<crate::Dashboard>) {
+        self.header_mode = HeaderMode::Creating {
+            draft: String::new(),
+            error: None,
+        };
+        self.row_mode = RowMode::Idle;
+        self.caret_visible = true;
+        window.focus(&self.create_focus, cx);
+        // Spawn a 500ms blink loop. Holding the Task<()> handle in
+        // self.blink_task means dropping it (on cancel/submit/refresh)
+        // cancels the loop. The loop also self-terminates when
+        // header_mode leaves Creating.
+        self.blink_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(500))
+                    .await;
+                let still_creating = this
+                    .update(cx, |dashboard, cx| {
+                        if matches!(
+                            dashboard.wikis.header_mode,
+                            HeaderMode::Creating { .. }
+                        ) {
+                            dashboard.wikis.caret_visible = !dashboard.wikis.caret_visible;
+                            cx.notify();
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false);
+                if !still_creating {
+                    break;
+                }
+            }
+        }));
+        cx.notify();
+    }
+
+    fn cancel_create(&mut self, cx: &mut Context<crate::Dashboard>) {
+        if matches!(self.header_mode, HeaderMode::Creating { .. }) {
+            self.header_mode = HeaderMode::Idle;
+            self.blink_task = None;
+            cx.notify();
+        }
+    }
+
+    fn submit_create(&mut self, cx: &mut Context<crate::Dashboard>) {
+        let slug = match &self.header_mode {
+            HeaderMode::Creating { draft, .. } => draft.clone(),
+            HeaderMode::Idle => return,
+        };
+        if slug.is_empty() {
+            // Empty input — treat as cancel.
+            self.cancel_create(cx);
+            return;
+        }
+        let result = self.wiki.lock().unwrap().create_page(&slug, "");
+        match result {
+            Ok(()) => self.refresh_after_mutation(Selection::Page(slug), cx),
+            Err(err) => {
+                if let HeaderMode::Creating { draft: _, error } = &mut self.header_mode {
+                    *error = Some(format_create_error(&err));
+                    cx.notify();
+                }
+            }
+        }
+    }
+
+    fn handle_create_key(
+        &mut self,
+        event: &KeyDownEvent,
+        cx: &mut Context<crate::Dashboard>,
+    ) {
+        let key = match &self.header_mode {
+            HeaderMode::Creating { .. } => event.keystroke.key.clone(),
+            HeaderMode::Idle => return,
+        };
+        let modifiers = event.keystroke.modifiers;
+
+        if key == "enter" {
+            self.submit_create(cx);
+            return;
+        }
+        if key == "escape" {
+            self.cancel_create(cx);
+            return;
+        }
+        if modifiers.platform || modifiers.control || modifiers.alt {
+            return;
+        }
+        if key == "backspace" {
+            if let HeaderMode::Creating { draft, .. } = &mut self.header_mode {
+                draft.pop();
+                cx.notify();
+            }
+            return;
+        }
+        if matches!(key.as_str(), "up" | "down" | "left" | "right" | "tab") {
+            return;
+        }
+        if key.chars().count() == 1 {
+            if let Some(ch) = key.chars().next() {
+                if !ch.is_control() {
+                    if let HeaderMode::Creating { draft, .. } = &mut self.header_mode {
+                        draft.push(ch);
+                        cx.notify();
+                    }
+                }
+            }
+        }
+    }
+
+    fn render_create_row(
+        &self,
+        cx: &mut Context<crate::Dashboard>,
+        draft: &str,
+        error: Option<&str>,
+    ) -> AnyElement {
+        let display: String = if draft.is_empty() {
+            "Please input name".into()
+        } else {
+            draft.to_string()
+        };
+        let display_color = if draft.is_empty() {
+            adsum_tokens::text_dim()
+        } else {
+            adsum_tokens::text_primary()
+        };
+        let focus_handle = self.create_focus.clone();
+        // Hold the layout slot constant so blinking doesn't shift the row;
+        // toggle color between accent and transparent (= bg) instead.
+        let caret_color = if self.caret_visible {
+            adsum_tokens::accent()
+        } else {
+            adsum_tokens::bg_primary()
+        };
+        let mut row = div()
+            .flex()
+            .flex_col()
+            .border_b_1()
+            .border_color(adsum_tokens::border())
+            .child(
+                div()
+                    .id("wikis-create-input")
+                    .track_focus(&focus_handle)
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .px_4()
+                    .py_3()
+                    .text_size(px(adsum_tokens::TEXT_BODY))
+                    .on_key_down(cx.listener(
+                        |this, event: &KeyDownEvent, _window, cx| {
+                            this.wikis.handle_create_key(event, cx);
+                        },
+                    ))
+                    .child(div().text_color(display_color).child(display))
+                    .child(div().ml_1().text_color(caret_color).child("▌")),
+            );
+        if let Some(msg) = error {
+            row = row.child(
+                div()
+                    .px_4()
+                    .pb_2()
+                    .text_size(px(adsum_tokens::TEXT_META))
+                    .text_color(adsum_tokens::error_red())
+                    .child(msg.to_string()),
+            );
+        }
+        row.into_any_element()
+    }
+
     /// Re-read the page list and content for `next_selection`. Resets
     /// `row_mode` and `header_mode` to `Idle`. Caller picks the selection
     /// to land on (typically: `Page(new)` after create / rename, `Index`
     /// after delete-of-current).
-    #[allow(dead_code)]
     fn refresh_after_mutation(
         &mut self,
         next_selection: Selection,
@@ -98,6 +280,7 @@ impl WikisView {
         self.content = read_for(&self.wiki, &self.selection);
         self.row_mode = RowMode::Idle;
         self.header_mode = HeaderMode::Idle;
+        self.blink_task = None;
         cx.notify();
     }
 
@@ -140,20 +323,51 @@ impl WikisView {
                 self.selection == Selection::Log,
             ));
 
+        let heading = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .px_4()
+            .py_4()
+            .child(
+                div()
+                    .text_size(px(adsum_tokens::TEXT_HEADING))
+                    .text_color(adsum_tokens::text_primary())
+                    .child("Wiki"),
+            )
+            .child(
+                div()
+                    .id("wiki-create-button")
+                    .w(px(28.0))
+                    .h(px(28.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(adsum_tokens::bg_hover()))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _event, window, cx| {
+                            this.wikis.start_create(window, cx);
+                        }),
+                    )
+                    .child(
+                        svg()
+                            .path("plus.svg")
+                            .size(px(16.0))
+                            .text_color(adsum_tokens::text_muted()),
+                    ),
+            );
+
         let top = div()
             .flex()
             .flex_col()
             .flex_shrink_0()
             .border_b_1()
             .border_color(adsum_tokens::border())
-            .child(
-                div()
-                    .px_4()
-                    .py_4()
-                    .text_size(px(adsum_tokens::TEXT_HEADING))
-                    .text_color(adsum_tokens::text_primary())
-                    .child("Wiki"),
-            )
+            .child(heading)
             .child(tabs_row);
 
         let mut pages_list = div()
@@ -163,6 +377,14 @@ impl WikisView {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll();
+
+        if let HeaderMode::Creating { draft, error } = &self.header_mode {
+            let draft = draft.clone();
+            let error = error.clone();
+            pages_list =
+                pages_list.child(self.render_create_row(cx, &draft, error.as_deref()));
+        }
+
         for (idx, page) in self.pages.iter().enumerate() {
             let is_selected = matches!(&self.selection, Selection::Page(s) if s == &page.slug);
             pages_list = pages_list.child(page_row(cx, idx, &page.slug, is_selected));
@@ -221,6 +443,20 @@ fn read_for(wiki: &Arc<Mutex<WikiStore>>, sel: &Selection) -> Result<String, Con
         Selection::Page(slug) => wiki.lock().unwrap().read_page(slug),
     };
     result.map_err(|err| ContentError(format_wiki_error(&err, sel)))
+}
+
+fn format_create_error(err: &WikiError) -> String {
+    match err {
+        WikiError::InvalidSlug(_) => {
+            "Lowercase letters, digits, and '-' only; can't start with '-'.".into()
+        }
+        WikiError::PageAlreadyExists(slug) => format!("Page '{slug}' already exists."),
+        WikiError::Io(io_err) => format!("Could not create page: {io_err}"),
+        WikiError::PageNotFound(_) => {
+            // create_page never returns PageNotFound; defensive default.
+            "Could not create page.".into()
+        }
+    }
 }
 
 fn format_wiki_error(err: &WikiError, sel: &Selection) -> String {

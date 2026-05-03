@@ -40,7 +40,7 @@ impl Dashboard {
         Self {
             active_section: Section::Conversations,
             conversations: ConversationsView::new(),
-            wikis: WikisView::new(wiki),
+            wikis: WikisView::new(wiki, cx),
             settings_view,
         }
     }
