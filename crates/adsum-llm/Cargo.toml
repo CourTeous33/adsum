@@ -8,6 +8,8 @@ publish.workspace = true
 [dependencies]
 adsum-state        = { path = "../adsum-state" }
 adsum-settings     = { path = "../adsum-settings" }
+adsum-tools        = { path = "../adsum-tools" }
+adsum-skills       = { path = "../adsum-skills" }
 async-channel      = { workspace = true }
 serde              = { workspace = true }
 serde_json         = { workspace = true }

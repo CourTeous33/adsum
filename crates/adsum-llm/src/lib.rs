@@ -1,27 +1,33 @@
 //! LLM service actor: owns a tokio Runtime on a dedicated thread,
-//! receives `LlmRequest`s over an `async_channel`, dispatches to per-provider
-//! streaming functions, and emits `LlmChunk`s back over the request's
+//! receives `LlmRequest`s over an `async_channel`, and dispatches each one to
+//! the agent loop in `agent::handle_request`. The loop iteratively calls the
+//! provider, dispatches tools, and emits `LlmChunk`s back over the request's
 //! `chunks_tx`.
 //!
 //! The boundary between this crate and the GPUI side is `async_channel`,
 //! which both the GPUI executor and tokio accept.
 
 use adsum_settings::{ModelId, Provider};
-use adsum_state::Message;
+use adsum_state::Block;
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
+mod agent;
 mod anthropic;
+mod event;
 mod openai;
+
+pub use event::{ProviderEvent, StopReason};
 
 pub const SYSTEM_PROMPT: &str =
     "You are Adsum, a fast assistant summoned by hotkey. Answer concisely.";
 
 #[derive(Debug)]
 pub struct LlmRequest {
-    pub messages: Vec<Message>,
+    pub blocks: Vec<Block>,
     pub model: ModelId,
     pub api_key: String,
-    pub system: &'static str,
+    pub system: String,
     pub chunks_tx: async_channel::Sender<LlmChunk>,
     pub cancel: CancellationToken,
 }
@@ -29,8 +35,21 @@ pub struct LlmRequest {
 #[derive(Debug, Clone)]
 pub enum LlmChunk {
     Text(String),
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+        is_error: bool,
+    },
     Done,
-    Error { code: String, message: String },
+    Error {
+        code: String,
+        message: String,
+    },
 }
 
 pub struct LlmService {
@@ -46,6 +65,9 @@ pub struct LlmService {
     /// drop — intentional for app-exit teardown.
     #[allow(dead_code)]
     runtime: tokio::runtime::Runtime,
+    /// Stashed so each dispatched request gets a clone for the agent loop.
+    #[allow(dead_code)]
+    registry: Arc<adsum_tools::ToolRegistry>,
 }
 
 impl Drop for LlmService {
@@ -61,7 +83,7 @@ impl Drop for LlmService {
 }
 
 impl LlmService {
-    pub fn spawn() -> Self {
+    pub fn spawn(registry: Arc<adsum_tools::ToolRegistry>) -> Self {
         let (request_tx, request_rx) = async_channel::unbounded::<LlmRequest>();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -71,6 +93,7 @@ impl LlmService {
             .expect("build tokio runtime");
 
         let handle = runtime.handle().clone();
+        let registry_clone = registry.clone();
         let worker = std::thread::Builder::new()
             .name("adsum-llm-dispatcher".into())
             .spawn(move || {
@@ -78,7 +101,8 @@ impl LlmService {
                     let client = reqwest::Client::new();
                     while let Ok(req) = request_rx.recv().await {
                         let client = client.clone();
-                        tokio::spawn(handle_request(client, req));
+                        let registry = registry_clone.clone();
+                        tokio::spawn(crate::agent::handle_request(client, registry, req));
                     }
                 });
             })
@@ -88,6 +112,7 @@ impl LlmService {
             request_tx,
             worker: Some(worker),
             runtime,
+            registry,
         }
     }
 
@@ -145,81 +170,6 @@ static SUPPORTED_MODELS: std::sync::LazyLock<Vec<(&'static str, ModelId)>> =
         ]
     });
 
-async fn handle_request(client: reqwest::Client, req: LlmRequest) {
-    if req.api_key.is_empty() {
-        let provider_name = match req.model.provider {
-            Provider::Anthropic => "Anthropic",
-            Provider::OpenAI => "OpenAI",
-        };
-        emit(
-            &req.chunks_tx,
-            LlmChunk::Error {
-                code: "no_key".into(),
-                message: format!("No API key configured for {provider_name}. Add one in Settings."),
-            },
-        )
-        .await;
-        return;
-    }
-
-    use futures_util::StreamExt;
-    type ChunkStream =
-        std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<String, ProviderError>> + Send>>;
-    let stream_result: Result<ChunkStream, ProviderError> = match req.model.provider {
-        Provider::Anthropic => anthropic::stream(
-            &client,
-            &req.api_key,
-            &req.model.name,
-            &req.messages,
-            req.system,
-        )
-        .await
-        .map(|s| Box::pin(s) as ChunkStream),
-        Provider::OpenAI => openai::stream(
-            &client,
-            &req.api_key,
-            &req.model.name,
-            &req.messages,
-            req.system,
-        )
-        .await
-        .map(|s| Box::pin(s) as ChunkStream),
-    };
-
-    let mut stream = match stream_result {
-        Ok(s) => s,
-        Err(provider_err) => {
-            emit(&req.chunks_tx, provider_err.into_chunk()).await;
-            return;
-        }
-    };
-
-    loop {
-        tokio::select! {
-            _ = req.cancel.cancelled() => break,
-            next = stream.next() => match next {
-                Some(Ok(text)) => emit(&req.chunks_tx, LlmChunk::Text(text)).await,
-                Some(Err(e)) => {
-                    emit(&req.chunks_tx, e.into_chunk()).await;
-                    return;
-                }
-                None => {
-                    emit(&req.chunks_tx, LlmChunk::Done).await;
-                    return;
-                }
-            }
-        }
-    }
-    // Cancellation path: don't emit anything; the chatbox finalizes locally.
-}
-
-async fn emit(tx: &async_channel::Sender<LlmChunk>, chunk: LlmChunk) {
-    if let Err(err) = tx.send(chunk).await {
-        // Receiver dropped — the chatbox closed. Nothing to do.
-        let _ = err;
-    }
-}
-
 #[derive(Debug)]
 pub struct ProviderError {
     pub code: String,
@@ -235,10 +185,58 @@ impl ProviderError {
     }
 }
 
+use adsum_skills::Skill;
+
+/// Compose the request's system prompt by appending each skill's
+/// `when-to-use` line and body under a top-level `# Available skills` section.
+/// Returns `base` unchanged when `skills` is empty.
+pub fn compose_system_prompt(base: &str, skills: &[Skill]) -> String {
+    if skills.is_empty() {
+        return base.to_string();
+    }
+    let mut out = String::with_capacity(
+        base.len() + skills.iter().map(|s| s.body.len() + 256).sum::<usize>(),
+    );
+    out.push_str(base);
+    out.push_str("\n\n# Available skills\n\nYou have these skills available. Each describes a workflow you can follow.\n");
+    for skill in skills {
+        out.push_str(&format!(
+            "\n## /{}\n{}\n\n{}\n",
+            skill.slug, skill.when_to_use, skill.body
+        ));
+    }
+    out
+}
+
+#[cfg(test)]
+mod compose_tests {
+    use super::*;
+
+    #[test]
+    fn empty_skills_returns_base_unchanged() {
+        assert_eq!(compose_system_prompt("base", &[]), "base");
+    }
+
+    #[test]
+    fn single_skill_appends_section() {
+        let skill = adsum_skills::Skill {
+            slug: "query".into(),
+            name: "query".into(),
+            description: "x".into(),
+            when_to_use: "when X".into(),
+            body: "BODY".into(),
+        };
+        let out = compose_system_prompt("base", &[skill]);
+        assert!(out.contains("# Available skills"));
+        assert!(out.contains("## /query"));
+        assert!(out.contains("when X"));
+        assert!(out.contains("BODY"));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use adsum_state::{Message, Role};
 
     #[test]
     fn supported_models_lists_five_models() {
@@ -259,73 +257,5 @@ mod tests {
             "default model {} not in supported_models()",
             default.name
         );
-    }
-
-    #[test]
-    fn no_key_emits_error_chunk_without_http() {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let (tx, rx) = async_channel::unbounded::<LlmChunk>();
-        let req = LlmRequest {
-            messages: vec![Message {
-                role: Role::User,
-                content: "hi".into(),
-            }],
-            model: ModelId {
-                provider: Provider::Anthropic,
-                name: "claude-sonnet-4-6".into(),
-            },
-            api_key: String::new(),
-            system: SYSTEM_PROMPT,
-            chunks_tx: tx,
-            cancel: CancellationToken::new(),
-        };
-        rt.block_on(async {
-            handle_request(reqwest::Client::new(), req).await;
-        });
-        let chunk = rx.try_recv().expect("expected one chunk");
-        match chunk {
-            LlmChunk::Error { code, message } => {
-                assert_eq!(code, "no_key");
-                assert!(message.contains("Anthropic"));
-                assert!(message.contains("Settings"));
-            }
-            other => panic!("expected Error, got {other:?}"),
-        }
-        assert!(rx.try_recv().is_err(), "no further chunks expected");
-    }
-
-    #[test]
-    fn cancellation_during_handle_request_aborts_quickly() {
-        // We can't talk to a real provider in CI. Instead, drive
-        // handle_request through the no_key path and verify cancel
-        // ordering is a no-op on the synchronous error path.
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let (tx, rx) = async_channel::unbounded::<LlmChunk>();
-        let cancel = CancellationToken::new();
-        cancel.cancel(); // pre-cancelled
-
-        let req = LlmRequest {
-            messages: vec![],
-            model: ModelId {
-                provider: Provider::Anthropic,
-                name: "claude-sonnet-4-6".into(),
-            },
-            api_key: String::new(), // forces no_key short-circuit
-            system: SYSTEM_PROMPT,
-            chunks_tx: tx,
-            cancel,
-        };
-        rt.block_on(async {
-            handle_request(reqwest::Client::new(), req).await;
-        });
-        // Even pre-cancelled, the no_key path emits its error before checking cancel.
-        let chunk = rx.try_recv().expect("expected one chunk");
-        assert!(matches!(chunk, LlmChunk::Error { .. }));
     }
 }

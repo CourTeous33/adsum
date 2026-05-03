@@ -3,12 +3,16 @@ use adsum_llm::LlmService;
 use adsum_settings::Settings;
 use adsum_state::AppState;
 use gpui::{
-    div, point, prelude::*, px, size, App, Bounds, Context, FocusHandle, Focusable, KeyDownEvent,
-    Pixels, Render, Subscription, Window, WindowBackgroundAppearance, WindowBounds, WindowKind,
-    WindowOptions,
+    App, Bounds, Context, FocusHandle, Focusable, KeyDownEvent, Pixels, Render, Subscription,
+    Window, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, div, point,
+    prelude::*, px, size,
 };
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::Duration;
 use tokio_util::sync::CancellationToken;
+
+mod parse;
+pub use parse::{ChatboxInput, parse_chatbox_input};
 
 pub struct Chatbox {
     current_text: String,
@@ -19,6 +23,7 @@ pub struct Chatbox {
     llm: Arc<LlmService>,
     in_flight_slot: Arc<Mutex<Option<CancellationToken>>>,
     conversation_slot: Arc<Mutex<Option<gpui::WindowHandle<Conversation>>>>,
+    skills: Arc<adsum_skills::SkillStore>,
 }
 
 impl Focusable for Chatbox {
@@ -35,16 +40,52 @@ impl Chatbox {
         llm: Arc<LlmService>,
         in_flight_slot: Arc<Mutex<Option<CancellationToken>>>,
         conversation_slot: Arc<Mutex<Option<gpui::WindowHandle<Conversation>>>>,
+        skills: Arc<adsum_skills::SkillStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
-        let activation_subscription = cx.observe_window_activation(window, |this, window, _cx| {
-            if !window.is_window_active() {
-                this.cancel_in_flight();
-                window.remove_window();
+        let activation_subscription = cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                return;
             }
+            // Defer the dismiss decision: AppKit fires resignKey on the
+            // chatbox before the popup's becomeKey has propagated to GPUI's
+            // per-window `active` cell. Yield ~80ms so the ordering settles,
+            // then re-check both windows on the foreground tick.
+            let conv_handle = this
+                .conversation_slot
+                .lock()
+                .unwrap()
+                .as_ref()
+                .copied();
+            let chatbox_window: gpui::WindowHandle<Self> = window
+                .window_handle()
+                .downcast::<Self>()
+                .expect("chatbox window must have Chatbox as its root view");
+            cx.spawn(async move |_, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(80))
+                    .await;
+                let _ = chatbox_window.update(cx, |chatbox, window, cx| {
+                    // Chatbox regained focus mid-defer: do nothing.
+                    if window.is_window_active() {
+                        return;
+                    }
+                    // Popup is now active (user clicked into it): keep alive.
+                    let conv_active = conv_handle
+                        .and_then(|h| h.is_active(cx))
+                        .unwrap_or(false);
+                    if conv_active {
+                        return;
+                    }
+                    // Real blur — focus left Adsum entirely. Dismiss.
+                    chatbox.cancel_in_flight();
+                    window.remove_window();
+                });
+            })
+            .detach();
         });
         Self {
             current_text: String::new(),
@@ -55,6 +96,7 @@ impl Chatbox {
             llm,
             in_flight_slot,
             conversation_slot,
+            skills,
         }
     }
 
@@ -88,6 +130,16 @@ impl Chatbox {
             cx.quit();
             return;
         }
+        // cmd+v paste: read clipboard text and append to the input.
+        if key == "v" && modifiers.platform {
+            if let Some(item) = cx.read_from_clipboard() {
+                if let Some(text) = item.text() {
+                    self.current_text.push_str(&text);
+                    cx.notify();
+                }
+            }
+            return;
+        }
         if modifiers.platform || modifiers.control || modifiers.alt {
             return;
         }
@@ -115,26 +167,31 @@ impl Chatbox {
                 (s.default_model.clone(), key)
             };
 
-            // 2. Snapshot the messages-so-far + push the new user message.
-            let messages = {
-                let st = self.state.lock().unwrap();
-                let mut msgs = st
-                    .current_session()
-                    .map(|s| s.messages_for_llm())
-                    .unwrap_or_default();
-                msgs.push(adsum_state::Message {
-                    role: adsum_state::Role::User,
-                    content: self.current_text.clone(),
-                });
-                msgs
-            };
+            // 2. Parse the input through the slash-command parser. Then push
+            //    an InProgress turn into AppState. begin_turn appends a single
+            //    Block::UserText built from display_text; we OVERWRITE that
+            //    turn's blocks with parsed.blocks, which may include a leading
+            //    SkillInvocation followed by a formatted UserText.
+            let raw_input = std::mem::take(&mut self.current_text);
+            let parsed = parse::parse_chatbox_input(&raw_input, &self.skills);
+            {
+                let mut st = self.state.lock().unwrap();
+                if let Some(idx) = st.begin_turn(parsed.display_text.clone(), model.clone()) {
+                    if let Some(session) = st.current_session_mut() {
+                        if let Some(turn) = session.turns.get_mut(idx) {
+                            turn.blocks = parsed.blocks.clone();
+                        }
+                    }
+                }
+            }
 
-            // 3. Push InProgress turn into AppState.
-            let user_text = std::mem::take(&mut self.current_text);
-            self.state
-                .lock()
-                .unwrap()
-                .begin_turn(user_text, model.clone());
+            // 3. Snapshot the full block list for this request.
+            let blocks: Vec<adsum_state::Block> = {
+                let st = self.state.lock().unwrap();
+                st.current_session()
+                    .map(|s| s.blocks_for_llm())
+                    .unwrap_or_default()
+            };
 
             // 4. Open the conversation window if needed.
             let conv_handle = *self.conversation_slot.lock().unwrap();
@@ -151,11 +208,13 @@ impl Chatbox {
             // 5. Spawn the request: cancel token, channel, fire LlmRequest.
             let cancel = CancellationToken::new();
             let (chunks_tx, chunks_rx) = async_channel::unbounded::<adsum_llm::LlmChunk>();
+            let system_prompt =
+                adsum_llm::compose_system_prompt(adsum_llm::SYSTEM_PROMPT, &self.skills.list());
             self.llm.send(adsum_llm::LlmRequest {
-                messages,
+                blocks,
                 model,
                 api_key,
-                system: adsum_llm::SYSTEM_PROMPT,
+                system: system_prompt,
                 chunks_tx,
                 cancel: cancel.clone(),
             });
@@ -182,6 +241,32 @@ impl Chatbox {
                             let mut st = state.lock().unwrap();
                             match chunk {
                                 adsum_llm::LlmChunk::Text(t) => st.append_chunk(&t),
+                                adsum_llm::LlmChunk::ToolUse { id, name, input } => {
+                                    if let Some(session) = st.current_session_mut() {
+                                        if let Some(turn) = session.turns.last_mut() {
+                                            turn.blocks.push(adsum_state::Block::ToolUse {
+                                                id,
+                                                name,
+                                                input,
+                                            });
+                                        }
+                                    }
+                                }
+                                adsum_llm::LlmChunk::ToolResult {
+                                    tool_use_id,
+                                    content,
+                                    is_error,
+                                } => {
+                                    if let Some(session) = st.current_session_mut() {
+                                        if let Some(turn) = session.turns.last_mut() {
+                                            turn.blocks.push(adsum_state::Block::ToolResult {
+                                                tool_use_id,
+                                                content,
+                                                is_error,
+                                            });
+                                        }
+                                    }
+                                }
                                 adsum_llm::LlmChunk::Done => {
                                     st.finalize_turn(adsum_state::TurnKind::Ok)
                                 }

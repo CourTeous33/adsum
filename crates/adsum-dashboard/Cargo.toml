@@ -13,3 +13,4 @@ adsum-settings = { path = "../adsum-settings" }
 adsum-wiki     = { path = "../adsum-wiki" }
 adsum-markdown = { path = "../adsum-markdown" }
 gpui = { workspace = true }
+serde_json = { workspace = true }

@@ -2,12 +2,17 @@
 //! detail pane. Read-only.
 
 use adsum_state::persistence::{load_all_sessions, load_session, SessionSummary};
-use adsum_state::{Session, TurnKind};
-use gpui::{div, prelude::*, px, AnyElement, Context, MouseButton};
+use adsum_state::{Block, Session, TurnKind};
+use gpui::{div, prelude::*, px, AnyElement, Context, MouseButton, SharedString};
+use std::collections::HashMap;
 
 pub struct ConversationsView {
     summaries: Vec<SessionSummary>,
     selected: Option<Session>,
+    /// Per-`ToolUse.id` disclosure state. Click toggles. Flat across sessions —
+    /// `tool_use_id` is globally unique (`toolu_*` / `call_*`), and the state
+    /// is ephemeral.
+    pub(crate) expanded: HashMap<String, bool>,
 }
 
 impl Default for ConversationsView {
@@ -25,6 +30,7 @@ impl ConversationsView {
         Self {
             summaries,
             selected: None,
+            expanded: HashMap::new(),
         }
     }
 
@@ -42,7 +48,7 @@ impl ConversationsView {
 
     pub fn render(&self, cx: &mut Context<crate::Dashboard>) -> AnyElement {
         let sidebar = self.render_sidebar(cx);
-        let detail = self.render_detail();
+        let detail = self.render_detail(cx);
         div()
             .flex()
             .flex_row()
@@ -163,7 +169,7 @@ impl ConversationsView {
         sidebar.into_any_element()
     }
 
-    fn render_detail(&self) -> AnyElement {
+    fn render_detail(&self, cx: &mut Context<crate::Dashboard>) -> AnyElement {
         match &self.selected {
             Some(session) => {
                 let truncated_id: String = session.id.chars().take(8).collect();
@@ -207,42 +213,189 @@ impl ConversationsView {
                     .overflow_y_scroll();
 
                 for turn in &session.turns {
-                    // User: right-aligned bubble (Claude.ai style). max_w on
-                    // the bubble forces long text to wrap inside it rather
-                    // than stretching full width.
-                    let user_row = div().w_full().flex().flex_row().justify_end().child(
-                        div()
-                            .max_w(px(560.0))
-                            .px_4()
-                            .py_2()
-                            .rounded(px(12.0))
-                            .bg(adsum_tokens::bg_hover())
-                            .text_color(adsum_tokens::text_primary())
-                            .child(turn.user_text.clone()),
-                    );
+                    // Pair ToolUse with its matching ToolResult by id for fast
+                    // lookup. Owned String for content because the click
+                    // closure outlives the borrow of `turn`.
+                    let mut results_by_id: HashMap<String, (String, bool)> = HashMap::new();
+                    for block in &turn.blocks {
+                        if let Block::ToolResult {
+                            tool_use_id,
+                            content,
+                            is_error,
+                        } = block
+                        {
+                            results_by_id
+                                .insert(tool_use_id.clone(), (content.clone(), *is_error));
+                        }
+                    }
 
-                    let (text_color, body_text) = match &turn.kind {
-                        TurnKind::Ok | TurnKind::InProgress => {
-                            (adsum_tokens::text_primary(), turn.assistant_text.clone())
+                    for block in &turn.blocks {
+                        match block {
+                            Block::UserText { text } => {
+                                // User: right-aligned bubble (Claude.ai
+                                // style). max_w on the bubble forces long
+                                // text to wrap inside it rather than
+                                // stretching full width.
+                                let user_row =
+                                    div().w_full().flex().flex_row().justify_end().child(
+                                        div()
+                                            .max_w(px(560.0))
+                                            .px_4()
+                                            .py_2()
+                                            .rounded(px(12.0))
+                                            .bg(adsum_tokens::bg_hover())
+                                            .text_color(adsum_tokens::text_primary())
+                                            .child(text.clone()),
+                                    );
+                                transcript = transcript.child(user_row);
+                            }
+                            Block::AssistantText { text } => {
+                                let renderer = adsum_markdown::Renderer::new()
+                                    .with_streaming_cursor(matches!(
+                                        turn.kind,
+                                        TurnKind::InProgress
+                                    ));
+                                let assistant_row = div()
+                                    .w_full()
+                                    .text_color(adsum_tokens::text_primary())
+                                    .child(renderer.render(text));
+                                transcript = transcript.child(assistant_row);
+                            }
+                            Block::SkillInvocation { name, args } => {
+                                let label = if args.is_empty() {
+                                    format!("▸ /{name}")
+                                } else {
+                                    format!("▸ /{name} \"{args}\"")
+                                };
+                                let row = div()
+                                    .w_full()
+                                    .text_color(adsum_tokens::text_dim())
+                                    .child(label);
+                                transcript = transcript.child(row);
+                            }
+                            Block::ToolUse { id, name, input } => {
+                                let result = results_by_id.get(id);
+                                let expanded =
+                                    *self.expanded.get(id).unwrap_or(&false);
+                                let label = match &result {
+                                    Some((content, _)) => {
+                                        let kb = content.len() as f64 / 1024.0;
+                                        if kb >= 1.0 {
+                                            format!("▸ {name} · {kb:.1} kB")
+                                        } else {
+                                            format!("▸ {name} · {} B", content.len())
+                                        }
+                                    }
+                                    None => format!("▸ {name} · …"),
+                                };
+                                let is_error = result.map(|(_, e)| *e).unwrap_or(false);
+                                let row_color = if is_error {
+                                    adsum_tokens::error_red()
+                                } else {
+                                    adsum_tokens::text_dim()
+                                };
+                                let row = div()
+                                    .id(SharedString::from(format!("tool-{id}")))
+                                    .w_full()
+                                    .text_color(row_color)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener({
+                                        let id = id.clone();
+                                        move |this, _, _, cx| {
+                                            let new_state = !this
+                                                .conversations
+                                                .expanded
+                                                .get(&id)
+                                                .copied()
+                                                .unwrap_or(false);
+                                            this.conversations
+                                                .expanded
+                                                .insert(id.clone(), new_state);
+                                            cx.notify();
+                                        }
+                                    }))
+                                    .child(label);
+                                transcript = transcript.child(row);
+
+                                if expanded {
+                                    let input_pretty =
+                                        serde_json::to_string_pretty(input)
+                                            .unwrap_or_default();
+                                    let mut detail = div()
+                                        .w_full()
+                                        .px_4()
+                                        .py_2()
+                                        .bg(adsum_tokens::bg_hover())
+                                        .flex()
+                                        .flex_col()
+                                        .gap_1();
+                                    detail = detail
+                                        .child(
+                                            div()
+                                                .text_color(adsum_tokens::text_dim())
+                                                .child("input:"),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_color(adsum_tokens::text_primary())
+                                                .child(input_pretty),
+                                        );
+                                    if let Some((content, _)) = &result {
+                                        detail = detail
+                                            .child(
+                                                div()
+                                                    .text_color(adsum_tokens::text_dim())
+                                                    .child("result:"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_color(adsum_tokens::text_primary())
+                                                    .child(content.clone()),
+                                            );
+                                    }
+                                    transcript = transcript.child(detail);
+                                }
+                            }
+                            Block::ToolResult { .. } => {
+                                // Already rendered as part of its matching ToolUse — skip.
+                            }
                         }
-                        TurnKind::Cancelled if turn.assistant_text.is_empty() => {
-                            (adsum_tokens::text_dim(), "(cancelled)".into())
+                    }
+
+                    // Per-turn final-state markers (preserve previous
+                    // behavior).
+                    match &turn.kind {
+                        TurnKind::Cancelled
+                            if turn
+                                .blocks
+                                .iter()
+                                .all(|b| !matches!(b, Block::AssistantText { .. })) =>
+                        {
+                            transcript = transcript.child(
+                                div()
+                                    .w_full()
+                                    .text_color(adsum_tokens::text_dim())
+                                    .child("(cancelled)"),
+                            );
                         }
-                        TurnKind::Cancelled => (
-                            adsum_tokens::text_primary(),
-                            format!("{}…", turn.assistant_text),
-                        ),
+                        TurnKind::Cancelled => {
+                            transcript = transcript.child(
+                                div()
+                                    .w_full()
+                                    .text_color(adsum_tokens::text_dim())
+                                    .child("…"),
+                            );
+                        }
                         TurnKind::Error { message, .. } => {
-                            (adsum_tokens::error_red(), format!("Error: {message}"))
+                            transcript = transcript.child(
+                                div()
+                                    .w_full()
+                                    .text_color(adsum_tokens::error_red())
+                                    .child(format!("Error: {message}")),
+                            );
                         }
-                    };
-
-                    let assistant_row = div()
-                        .w_full()
-                        .text_color(text_color)
-                        .child(adsum_markdown::Renderer::new().render(&body_text));
-
-                    transcript = transcript.child(user_row).child(assistant_row);
+                        _ => {}
+                    }
                 }
 
                 div()

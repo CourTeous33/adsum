@@ -56,6 +56,7 @@ fn open_chatbox(
     llm: Arc<adsum_llm::LlmService>,
     in_flight_slot: Arc<Mutex<Option<tokio_util::sync::CancellationToken>>>,
     conversation_slot: Arc<Mutex<Option<gpui::WindowHandle<Conversation>>>>,
+    skills: Arc<adsum_skills::SkillStore>,
     cx: &mut App,
 ) -> gpui::WindowHandle<Chatbox> {
     let chatbox_size = size(px(720.0), px(80.0));
@@ -88,7 +89,19 @@ fn open_chatbox(
             let llm = llm.clone();
             let in_flight_slot = in_flight_slot.clone();
             let conv_slot = conversation_slot.clone();
-            cx.new(|cx| Chatbox::new(state, settings, llm, in_flight_slot, conv_slot, window, cx))
+            let skills = skills.clone();
+            cx.new(|cx| {
+                Chatbox::new(
+                    state,
+                    settings,
+                    llm,
+                    in_flight_slot,
+                    conv_slot,
+                    skills,
+                    window,
+                    cx,
+                )
+            })
         },
     )
     .unwrap()
@@ -231,7 +244,6 @@ fn run_example() {
             adsum_settings::Settings::default()
         });
         let settings = Arc::new(std::sync::RwLock::new(initial_settings));
-        let llm = Arc::new(adsum_llm::LlmService::spawn());
         // Wiki store. Path resolution + bootstrap happens here. Bootstrap
         // failures are fatal: without a wiki root the dashboard's Wikis
         // section has nothing to render, so log + notify + exit non-zero
@@ -258,6 +270,35 @@ fn run_example() {
                 std::process::exit(1);
             }
         };
+
+        // Build the tool registry. Wiki tools share the WikiStore; the two
+        // web tools are independent.
+        let mut registry = adsum_tools::ToolRegistry::new();
+        registry.register(Arc::new(adsum_tools::WikiListTool::new(wiki.clone())));
+        registry.register(Arc::new(adsum_tools::WikiReadTool::new(wiki.clone())));
+        registry.register(Arc::new(adsum_tools::WikiWriteTool::new(wiki.clone())));
+        registry.register(Arc::new(adsum_tools::WikiGrepTool::new(wiki.clone())));
+        registry.register(Arc::new(adsum_tools::WebFetchTool::new()));
+        registry.register(Arc::new(adsum_tools::WebArticleTool::new()));
+        let registry = Arc::new(registry);
+
+        // Open the SkillStore. Bootstrap bundled skills if empty.
+        let skills = match adsum_skills::SkillStore::new() {
+            Ok(s) => {
+                if let Err(err) = s.seed_if_empty() {
+                    eprintln!("adsum-app: failed to seed bundled skills: {err:#}");
+                }
+                Arc::new(s)
+            }
+            Err(err) => {
+                eprintln!("adsum-app: skills disabled — {err:#}");
+                // Fallback empty store at a temp path so call sites don't need Option.
+                let tmp = std::env::temp_dir().join("adsum-skills-fallback");
+                Arc::new(adsum_skills::SkillStore::at(tmp).expect("fallback skill store"))
+            }
+        };
+
+        let llm = Arc::new(adsum_llm::LlmService::spawn(registry.clone()));
         let in_flight_slot: Arc<Mutex<Option<tokio_util::sync::CancellationToken>>> =
             Arc::new(Mutex::new(None));
         let chatbox_slot: Arc<Mutex<Option<gpui::WindowHandle<Chatbox>>>> =
@@ -365,6 +406,7 @@ fn run_example() {
         let settings_for_chatbox = settings.clone();
         let llm_for_chatbox = llm.clone();
         let in_flight_for_chatbox = in_flight_slot.clone();
+        let skills_for_chatbox = skills.clone();
         cx.spawn(async move |async_cx| {
             while let Ok(()) = chatbox_summon_rx.recv().await {
                 let action = state_for_chatbox.lock().unwrap().handle_chatbox_summon();
@@ -374,6 +416,7 @@ fn run_example() {
                 let settings = settings_for_chatbox.clone();
                 let llm = llm_for_chatbox.clone();
                 let in_flight = in_flight_for_chatbox.clone();
+                let skills = skills_for_chatbox.clone();
                 async_cx.update(move |cx: &mut App| match action {
                     SummonAction::Open => {
                         // Defensive: if a stale handle is in the slot (state
@@ -392,6 +435,7 @@ fn run_example() {
                             llm.clone(),
                             in_flight.clone(),
                             conv_slot.clone(),
+                            skills.clone(),
                             cx,
                         );
                         *slot.lock().unwrap() = Some(handle);

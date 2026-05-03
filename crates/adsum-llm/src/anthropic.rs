@@ -2,11 +2,13 @@
 //!
 //! Endpoint: POST https://api.anthropic.com/v1/messages
 //! Auth: x-api-key header
-//! Streaming: SSE; we care about content_block_delta (text) and message_stop
-//! (terminator). All other event types are ignored.
+//! Streaming: SSE; the agent loop consumes provider-events:
+//! content_block_start (tool_use), content_block_delta (text_delta /
+//! input_json_delta), content_block_stop, message_delta (stop_reason).
 
-use crate::ProviderError;
-use adsum_state::{Message, Role};
+use crate::{ProviderError, ProviderEvent, StopReason};
+use adsum_state::Block;
+use adsum_tools::ToolSchema;
 use eventsource_stream::Eventsource;
 use futures_util::{Stream, StreamExt};
 use reqwest::Client;
@@ -17,40 +19,172 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 const MAX_TOKENS: u32 = 4096;
 
 #[derive(Serialize)]
-struct RequestBody<'a> {
+struct AgentRequestBody<'a> {
     model: &'a str,
     system: &'a str,
-    messages: Vec<RequestMessage<'a>>,
+    messages: Vec<AgentMessage<'a>>,
+    tools: &'a [AgentToolDef<'a>],
     stream: bool,
     max_tokens: u32,
 }
 
 #[derive(Serialize)]
-struct RequestMessage<'a> {
+pub(crate) struct AgentMessage<'a> {
     role: &'static str,
-    content: &'a str,
+    content: Vec<AgentContent<'a>>,
 }
 
-pub async fn stream(
+/// `cache_control: {"type": "ephemeral"}` marks a block as cacheable in
+/// Anthropic's prompt-cache (5-minute TTL). The cache covers everything up
+/// to AND including the marked block, so attaching it to the LAST tool def
+/// caches the whole tools list, and attaching it to the LAST content block
+/// of the LAST message caches the whole conversation history. Cached
+/// prefixes cost ~10× less than fresh input on subsequent agent-loop
+/// iterations — the difference between a 24 KB tool_result paid 8× and
+/// paid 1× + cached 7×.
+#[derive(Serialize, Clone, Copy)]
+struct CacheControl {
+    #[serde(rename = "type")]
+    kind: &'static str,
+}
+
+const EPHEMERAL: CacheControl = CacheControl { kind: "ephemeral" };
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum AgentContent<'a> {
+    Text {
+        text: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+    ToolUse {
+        id: &'a str,
+        name: &'a str,
+        input: &'a serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+    ToolResult {
+        tool_use_id: &'a str,
+        content: &'a str,
+        is_error: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+}
+
+#[derive(Serialize)]
+struct AgentToolDef<'a> {
+    name: &'a str,
+    description: &'a str,
+    input_schema: &'a serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<CacheControl>,
+}
+
+/// Translate `&[Block]` into Anthropic's wire-format messages. Consecutive
+/// blocks of the same role are grouped into one message with a content
+/// array. `Block::SkillInvocation` is metadata; skipped.
+pub(crate) fn blocks_to_anthropic_messages(blocks: &[Block]) -> Vec<AgentMessage<'_>> {
+    let mut out: Vec<AgentMessage> = Vec::new();
+    for block in blocks {
+        let (role, content) = match block {
+            Block::UserText { text } => (
+                "user",
+                AgentContent::Text {
+                    text,
+                    cache_control: None,
+                },
+            ),
+            Block::AssistantText { text } => (
+                "assistant",
+                AgentContent::Text {
+                    text,
+                    cache_control: None,
+                },
+            ),
+            Block::ToolUse { id, name, input } => (
+                "assistant",
+                AgentContent::ToolUse {
+                    id,
+                    name,
+                    input,
+                    cache_control: None,
+                },
+            ),
+            Block::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } => (
+                "user",
+                AgentContent::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error: *is_error,
+                    cache_control: None,
+                },
+            ),
+            Block::SkillInvocation { .. } => continue,
+        };
+        match out.last_mut() {
+            Some(last) if last.role == role => last.content.push(content),
+            _ => out.push(AgentMessage {
+                role,
+                content: vec![content],
+            }),
+        }
+    }
+    // Mark the last content block of the last message as the cache breakpoint
+    // — Anthropic caches everything up to and including this block. On the
+    // next iteration only the new blocks past this breakpoint pay full price.
+    if let Some(last_msg) = out.last_mut() {
+        if let Some(last_content) = last_msg.content.last_mut() {
+            match last_content {
+                AgentContent::Text { cache_control, .. }
+                | AgentContent::ToolUse { cache_control, .. }
+                | AgentContent::ToolResult { cache_control, .. } => {
+                    *cache_control = Some(EPHEMERAL);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Open an SSE stream against Anthropic's Messages API with tool support.
+pub async fn agent_stream(
     client: &Client,
     key: &str,
     model: &str,
-    messages: &[Message],
+    blocks: &[Block],
     system: &str,
-) -> Result<impl Stream<Item = Result<String, ProviderError>>, ProviderError> {
-    let body = RequestBody {
+    tools: &[ToolSchema],
+) -> Result<impl Stream<Item = Result<ProviderEvent, ProviderError>>, ProviderError> {
+    let messages = blocks_to_anthropic_messages(blocks);
+    let mut tool_defs: Vec<AgentToolDef> = tools
+        .iter()
+        .map(|t| AgentToolDef {
+            name: t.name,
+            description: t.description,
+            input_schema: &t.input_schema,
+            cache_control: None,
+        })
+        .collect();
+    // Cache the tool definitions: they're identical across every iteration
+    // of an agent loop, so caching the prefix saves the full input cost on
+    // re-sends. Mark the LAST tool def — Anthropic caches everything before
+    // and including this breakpoint.
+    if let Some(last) = tool_defs.last_mut() {
+        last.cache_control = Some(EPHEMERAL);
+    }
+
+    let body = AgentRequestBody {
         model,
         system,
-        messages: messages
-            .iter()
-            .map(|m| RequestMessage {
-                role: match m.role {
-                    Role::User => "user",
-                    Role::Assistant => "assistant",
-                },
-                content: &m.content,
-            })
-            .collect(),
+        messages,
+        tools: &tool_defs,
         stream: true,
         max_tokens: MAX_TOKENS,
     };
@@ -77,12 +211,13 @@ pub async fn stream(
         });
     }
 
-    let byte_stream = response.bytes_stream();
-    let event_stream = byte_stream.eventsource();
-    Ok(parse_event_stream(event_stream))
+    let event_stream = response.bytes_stream().eventsource();
+    Ok(parse_provider_event_stream(event_stream))
 }
 
-fn parse_event_stream<S>(events: S) -> impl Stream<Item = Result<String, ProviderError>>
+fn parse_provider_event_stream<S>(
+    events: S,
+) -> impl Stream<Item = Result<ProviderEvent, ProviderError>>
 where
     S: Stream<
             Item = Result<
@@ -106,15 +241,37 @@ where
                     ));
                 }
                 Some(Ok(event)) => {
-                    if let Some(text) = parse_anthropic_event(&event.event, &event.data) {
-                        return Some((Ok(text), events));
+                    if let Some(provider_event) =
+                        parse_anthropic_provider_event(&event.event, &event.data)
+                    {
+                        return Some((Ok(provider_event), events));
                     }
-                    // Non-text event (ping, message_start, content_block_start/stop,
-                    // message_delta, message_stop) — keep looping.
+                    // Non-event-of-interest (ping, message_start, message_stop) — keep looping.
                 }
             }
         }
     })
+}
+
+#[derive(Deserialize)]
+struct ContentBlockStartEnvelope {
+    content_block: ContentBlockStart,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ContentBlockStart {
+    Text {
+        #[serde(default)]
+        #[allow(dead_code)]
+        text: String,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+    },
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Deserialize)]
@@ -131,17 +288,68 @@ enum ContentBlockDelta {
     Other,
 }
 
-/// Returns the text payload of a `content_block_delta` event whose delta is a
-/// `text_delta`. Returns None for any other event type (ping, message_*, etc.)
-/// or any non-text delta.
-pub(crate) fn parse_anthropic_event(event_name: &str, data: &str) -> Option<String> {
-    if event_name != "content_block_delta" {
-        return None;
-    }
-    let envelope: ContentBlockDeltaEnvelope = serde_json::from_str(data).ok()?;
-    match envelope.delta {
-        ContentBlockDelta::TextDelta { text } => Some(text),
-        ContentBlockDelta::Other => None,
+#[derive(Deserialize)]
+struct MessageDeltaEnvelope {
+    delta: MessageDeltaInner,
+}
+
+#[derive(Deserialize)]
+struct MessageDeltaInner {
+    #[serde(default)]
+    stop_reason: Option<String>,
+}
+
+/// Parse one SSE event into a `ProviderEvent`. Returns None for non-meaningful
+/// events (ping, message_start, message_stop).
+pub(crate) fn parse_anthropic_provider_event(
+    event_name: &str,
+    data: &str,
+) -> Option<ProviderEvent> {
+    match event_name {
+        "content_block_start" => {
+            let env: ContentBlockStartEnvelope = serde_json::from_str(data).ok()?;
+            match env.content_block {
+                ContentBlockStart::ToolUse { id, name } => {
+                    Some(ProviderEvent::ToolUseStart { id, name })
+                }
+                _ => None,
+            }
+        }
+        "content_block_delta" => {
+            let env: ContentBlockDeltaEnvelope = serde_json::from_str(data).ok()?;
+            match env.delta {
+                ContentBlockDelta::TextDelta { text } => {
+                    Some(ProviderEvent::AssistantTextDelta(text))
+                }
+                ContentBlockDelta::Other => {
+                    // Try parsing as input_json_delta.
+                    let raw: serde_json::Value = serde_json::from_str(data).ok()?;
+                    let partial = raw["delta"]["partial_json"].as_str()?.to_string();
+                    Some(ProviderEvent::ToolUseInputDelta(partial))
+                }
+            }
+        }
+        "content_block_stop" => {
+            // Anthropic doesn't tell us in `content_block_stop` whether the
+            // closed block was a tool_use. The agent loop tracks pending
+            // tool-use IDs separately; emit a generic close that the loop
+            // matches against the most recent ToolUseStart by order.
+            let raw: serde_json::Value = serde_json::from_str(data).ok()?;
+            let _index = raw.get("index")?;
+            Some(ProviderEvent::ToolUseClose { id: String::new() })
+        }
+        "message_delta" => {
+            let env: MessageDeltaEnvelope = serde_json::from_str(data).ok()?;
+            let stop = env.delta.stop_reason?;
+            let reason = match stop.as_str() {
+                "end_turn" => StopReason::EndTurn,
+                "tool_use" => StopReason::ToolUse,
+                "max_tokens" => StopReason::MaxTokens,
+                other => StopReason::Other(other.to_string()),
+            };
+            Some(ProviderEvent::StopTurn { reason })
+        }
+        _ => None,
     }
 }
 
@@ -178,44 +386,136 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_text_delta_yields_text() {
-        let data = r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}"#;
-        let got = parse_anthropic_event("content_block_delta", data);
-        assert_eq!(got.as_deref(), Some("Hello"));
-    }
-
-    #[test]
-    fn parse_ping_returns_none() {
-        let got = parse_anthropic_event("ping", r#"{"type":"ping"}"#);
-        assert_eq!(got, None);
-    }
-
-    #[test]
-    fn parse_message_stop_returns_none() {
-        let got = parse_anthropic_event("message_stop", r#"{"type":"message_stop"}"#);
-        assert_eq!(got, None);
-    }
-
-    #[test]
-    fn parse_non_text_delta_returns_none() {
-        // input_json_delta etc. — variants we don't surface as text.
-        let data = r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}"#;
-        let got = parse_anthropic_event("content_block_delta", data);
-        assert_eq!(got, None);
-    }
-
-    #[test]
-    fn parse_malformed_data_returns_none() {
-        let got = parse_anthropic_event("content_block_delta", "not json at all");
-        assert_eq!(got, None);
-    }
-
-    #[test]
     fn classify_status_buckets_correctly() {
         assert_eq!(classify_status(401), "401");
         assert_eq!(classify_status(403), "403");
         assert_eq!(classify_status(429), "rate_limited");
         assert_eq!(classify_status(500), "5xx");
         assert_eq!(classify_status(503), "5xx");
+    }
+
+    #[test]
+    fn parse_tool_use_start_event_yields_tool_use_start() {
+        let data = r#"{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_x","name":"wiki_read","input":{}}}"#;
+        let ev = parse_anthropic_provider_event("content_block_start", data);
+        match ev {
+            Some(crate::ProviderEvent::ToolUseStart { id, name }) => {
+                assert_eq!(id, "toolu_x");
+                assert_eq!(name, "wiki_read");
+            }
+            other => panic!("expected ToolUseStart, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_input_json_delta_yields_tool_use_input_delta() {
+        let data = r#"{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"slug\":\"foo\"}"}}"#;
+        let ev = parse_anthropic_provider_event("content_block_delta", data);
+        match ev {
+            Some(crate::ProviderEvent::ToolUseInputDelta(json)) => {
+                assert_eq!(json, "{\"slug\":\"foo\"}");
+            }
+            other => panic!("expected ToolUseInputDelta, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_message_delta_with_tool_use_stop_yields_stop_turn_tool_use() {
+        let data = r#"{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{}}"#;
+        let ev = parse_anthropic_provider_event("message_delta", data);
+        match ev {
+            Some(crate::ProviderEvent::StopTurn { reason }) => {
+                assert_eq!(reason, crate::StopReason::ToolUse);
+            }
+            other => panic!("expected StopTurn(ToolUse), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_message_delta_with_end_turn_yields_stop_turn_end_turn() {
+        let data = r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{}}"#;
+        let ev = parse_anthropic_provider_event("message_delta", data);
+        match ev {
+            Some(crate::ProviderEvent::StopTurn { reason }) => {
+                assert_eq!(reason, crate::StopReason::EndTurn);
+            }
+            other => panic!("expected StopTurn(EndTurn), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn blocks_to_anthropic_groups_consecutive_user_blocks() {
+        use adsum_state::Block;
+        let blocks = vec![
+            Block::UserText { text: "hi".into() },
+            Block::AssistantText {
+                text: "hello".into(),
+            },
+            Block::AssistantText {
+                text: " more".into(),
+            },
+            Block::ToolResult {
+                tool_use_id: "t".into(),
+                content: "ok".into(),
+                is_error: false,
+            },
+            Block::UserText {
+                text: "next".into(),
+            },
+        ];
+        let msgs = blocks_to_anthropic_messages(&blocks);
+        // user(hi) → assistant(hello + more) → user(tool_result + next)
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0].role, "user");
+        assert_eq!(msgs[0].content.len(), 1);
+        assert_eq!(msgs[1].role, "assistant");
+        assert_eq!(msgs[1].content.len(), 2);
+        assert_eq!(msgs[2].role, "user");
+        assert_eq!(msgs[2].content.len(), 2);
+    }
+
+    #[test]
+    fn blocks_to_anthropic_skips_skill_invocation() {
+        use adsum_state::Block;
+        let blocks = vec![
+            Block::SkillInvocation {
+                name: "query".into(),
+                args: "x".into(),
+            },
+            Block::UserText { text: "hi".into() },
+        ];
+        let msgs = blocks_to_anthropic_messages(&blocks);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].role, "user");
+    }
+
+    #[test]
+    fn last_message_content_block_carries_cache_control_breakpoint() {
+        use adsum_state::Block;
+        let blocks = vec![
+            Block::UserText { text: "first".into() },
+            Block::AssistantText {
+                text: "second".into(),
+            },
+            Block::UserText { text: "third".into() },
+        ];
+        let msgs = blocks_to_anthropic_messages(&blocks);
+        let json = serde_json::to_string(&msgs).unwrap();
+        // The last block ("third") should carry cache_control; earlier ones
+        // should not.
+        let count = json.matches(r#""cache_control":{"type":"ephemeral"}"#).count();
+        assert_eq!(
+            count, 1,
+            "expected exactly one cache_control breakpoint on the last content block, got {count} in {json}"
+        );
+        // And it should appear in the LAST message (position-wise).
+        let last_block_idx = json
+            .rfind(r#""cache_control":{"type":"ephemeral"}"#)
+            .unwrap();
+        let third_idx = json.rfind(r#""text":"third""#).unwrap();
+        assert!(
+            third_idx < last_block_idx,
+            "cache_control should be inside the same content block as 'third'"
+        );
     }
 }

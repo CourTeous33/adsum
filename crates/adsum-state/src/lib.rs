@@ -7,15 +7,25 @@ pub use adsum_settings::{ModelId, Provider};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Session {
+    /// Persistence schema version. Always 2 in memory; v1 files (no field
+    /// present) are migrated on load. Bump on shape changes; old loaders
+    /// reject unknown future versions.
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
     pub id: String,
     pub created_at: SystemTime,
     pub turns: Vec<Turn>,
 }
 
+fn default_schema_version() -> u32 {
+    1 // older files lacked the field; default to 1 here so the loader can detect + migrate
+}
+
+pub const KNOWN_SCHEMA_VERSION: u32 = 2;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Turn {
-    pub user_text: String,
-    pub assistant_text: String,
+    pub blocks: Vec<Block>,
     pub kind: TurnKind,
     pub model: ModelId,
     pub timestamp: SystemTime,
@@ -36,58 +46,74 @@ pub enum TurnKind {
     Error { code: String, message: String },
 }
 
-#[derive(Debug, Clone)]
-pub enum Role {
-    User,
-    Assistant,
+/// A single semantic chunk of a turn. Turns are sequences of blocks; v2
+/// persistence stores them in order. The `(ToolUse.id, ToolResult.tool_use_id)`
+/// pair matches calls to results in the transcript.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Block {
+    UserText { text: String },
+    AssistantText { text: String },
+    SkillInvocation { name: String, args: String },
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+        #[serde(default)]
+        is_error: bool,
+    },
 }
 
-#[derive(Debug, Clone)]
-pub struct Message {
-    pub role: Role,
-    pub content: String,
+impl Turn {
+    /// Concatenation of all `Block::AssistantText` bodies in this turn, in
+    /// order. Empty string if there are none. The provider may interleave
+    /// assistant text with tool calls; this returns the user-visible "answer."
+    pub fn final_assistant_text(&self) -> String {
+        let mut out = String::new();
+        for block in &self.blocks {
+            if let Block::AssistantText { text } = block {
+                out.push_str(text);
+            }
+        }
+        out
+    }
+
+    /// The first `Block::UserText` body in this turn. Used by the dashboard's
+    /// "first user message preview" rendering. Returns None if the turn has
+    /// no user-text block (shouldn't happen for sessions started via
+    /// `AppState::begin_turn`, but defensive).
+    pub fn user_text_block(&self) -> Option<&str> {
+        self.blocks.iter().find_map(|b| match b {
+            Block::UserText { text } => Some(text.as_str()),
+            _ => None,
+        })
+    }
 }
 
 impl Session {
     pub fn new() -> Self {
         Self {
+            schema_version: KNOWN_SCHEMA_VERSION,
             id: uuid::Uuid::new_v4().to_string(),
             created_at: SystemTime::now(),
             turns: Vec::new(),
         }
     }
 
-    /// Build the message list for the next LLM call. Drops turns that don't
-    /// have usable assistant content (Error always; Cancelled with empty
-    /// assistant_text). The current InProgress turn (if any) contributes
-    /// only its user_text — the model never sees its own partial output as
-    /// "assistant" history.
-    pub fn messages_for_llm(&self) -> Vec<Message> {
-        let mut out = Vec::new();
-        for turn in &self.turns {
-            match &turn.kind {
-                TurnKind::Error { .. } => continue,
-                TurnKind::Cancelled if turn.assistant_text.is_empty() => continue,
-                TurnKind::InProgress => {
-                    out.push(Message {
-                        role: Role::User,
-                        content: turn.user_text.clone(),
-                    });
-                }
-                TurnKind::Ok | TurnKind::Cancelled => {
-                    out.push(Message {
-                        role: Role::User,
-                        content: turn.user_text.clone(),
-                    });
-                    out.push(Message {
-                        role: Role::Assistant,
-                        content: turn.assistant_text.clone(),
-                    });
-                }
-            }
-        }
-        out
+    /// Flat list of blocks across all turns, in conversation order. The agent
+    /// loop (Task 14) appends to this list as iteration proceeds; for now,
+    /// the chatbox uses it to build the single-shot request payload.
+    pub fn blocks_for_llm(&self) -> Vec<Block> {
+        self.turns
+            .iter()
+            .flat_map(|t| t.blocks.iter().cloned())
+            .collect()
     }
+
 }
 
 impl Default for Session {
@@ -138,6 +164,10 @@ impl AppState {
         self.current_session.as_ref()
     }
 
+    pub fn current_session_mut(&mut self) -> Option<&mut Session> {
+        self.current_session.as_mut()
+    }
+
     pub fn start_session(&mut self) -> &Session {
         self.current_session = Some(Session::new());
         self.current_session.as_ref().unwrap()
@@ -148,8 +178,7 @@ impl AppState {
     pub fn begin_turn(&mut self, user_text: String, model: ModelId) -> Option<usize> {
         let session = self.current_session.as_mut()?;
         session.turns.push(Turn {
-            user_text,
-            assistant_text: String::new(),
+            blocks: vec![Block::UserText { text: user_text }],
             kind: TurnKind::InProgress,
             model,
             timestamp: SystemTime::now(),
@@ -169,7 +198,12 @@ impl AppState {
         if !matches!(turn.kind, TurnKind::InProgress) {
             return;
         }
-        turn.assistant_text.push_str(chunk);
+        match turn.blocks.last_mut() {
+            Some(Block::AssistantText { text }) => text.push_str(chunk),
+            _ => turn.blocks.push(Block::AssistantText {
+                text: chunk.to_string(),
+            }),
+        }
     }
 
     /// Mark the most recent turn as finished. No-op if no session exists,

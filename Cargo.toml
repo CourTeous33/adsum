@@ -9,13 +9,15 @@ members = [
     "crates/adsum-llm",
     "crates/adsum-markdown",
     "crates/adsum-settings",
+    "crates/adsum-skills",
     "crates/adsum-state",
     "crates/adsum-tokens",
+    "crates/adsum-tools",
     "crates/adsum-wiki",
 ]
 
 [workspace.package]
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 publish = false
@@ -26,17 +28,21 @@ gpui = { git = "https://github.com/zed-industries/zed", rev = "3014170d7e4dfbe83
 gpui-platform = { git = "https://github.com/zed-industries/zed", rev = "3014170d7e4dfbe8379beda4dec92d6256b41209", package = "gpui_platform", features = ["font-kit"] }
 global-hotkey = "0.5"
 anyhow = "1"
+async-trait = "0.1"
 parking_lot = "0.12"
 async-channel = "2"
 env_logger = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml  = "0.9"
 uuid = { version = "1", features = ["v4"] }
 dirs = "5"
 thiserror = "1"
 tempfile = "3"
 rust-embed = "8"
 pulldown-cmark = "0.10"
+regex          = "1"
+readabilityrs  = "0.1"
 syntect        = "5"
 gh-emoji       = "1"
 reqwest_client = { git = "https://github.com/zed-industries/zed", rev = "3014170d7e4dfbe8379beda4dec92d6256b41209" }
