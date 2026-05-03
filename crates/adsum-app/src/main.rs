@@ -271,13 +271,15 @@ fn run_example() {
             }
         };
 
-        // Build the tool registry. All five concrete tools share the WikiStore.
+        // Build the tool registry. Wiki tools share the WikiStore; the two
+        // web tools are independent.
         let mut registry = adsum_tools::ToolRegistry::new();
         registry.register(Arc::new(adsum_tools::WikiListTool::new(wiki.clone())));
         registry.register(Arc::new(adsum_tools::WikiReadTool::new(wiki.clone())));
         registry.register(Arc::new(adsum_tools::WikiWriteTool::new(wiki.clone())));
         registry.register(Arc::new(adsum_tools::WikiGrepTool::new(wiki.clone())));
         registry.register(Arc::new(adsum_tools::WebFetchTool::new()));
+        registry.register(Arc::new(adsum_tools::WebArticleTool::new()));
         let registry = Arc::new(registry);
 
         // Open the SkillStore. Bootstrap bundled skills if empty.

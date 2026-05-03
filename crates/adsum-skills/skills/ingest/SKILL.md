@@ -10,7 +10,7 @@ You are adding new content to the user's wiki from an external source.
 
 ## Procedure
 
-1. Fetch: `web_fetch(url=<url>)`. If the body is HTML, strip tags mentally and focus on the article content.
+1. Fetch: `web_article(url=<url>)`. This runs Mozilla-Readability-style extraction and gives you `{ title, byline, body, ... }` already cleaned of HTML markup. Use `web_fetch` instead only if the URL is a JSON API, RSS feed, or you specifically need the raw page (uncommon for /ingest).
 2. Identify the **subject** (one main entity or concept) and any **secondary entities** worth their own pages.
 3. For each entity, create a page: `wiki_write(slug="<entity-slug>", mode="create", body="<page>")`. Each page should include:
    - A one-line definition at the top.

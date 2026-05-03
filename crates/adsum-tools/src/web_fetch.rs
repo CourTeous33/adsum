@@ -118,7 +118,7 @@ impl Tool for WebFetchTool {
 ///
 /// `regex` doesn't support backreferences, so the three "block" tags get
 /// three separate patterns rather than one alternation with `\1`.
-fn strip_html(body: &str) -> String {
+pub(crate) fn strip_html(body: &str) -> String {
     static SCRIPT: OnceLock<Regex> = OnceLock::new();
     static STYLE: OnceLock<Regex> = OnceLock::new();
     static NOSCRIPT: OnceLock<Regex> = OnceLock::new();

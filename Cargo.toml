@@ -42,6 +42,7 @@ tempfile = "3"
 rust-embed = "8"
 pulldown-cmark = "0.10"
 regex          = "1"
+readabilityrs  = "0.1"
 syntect        = "5"
 gh-emoji       = "1"
 reqwest_client = { git = "https://github.com/zed-industries/zed", rev = "3014170d7e4dfbe8379beda4dec92d6256b41209" }
