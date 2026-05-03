@@ -155,3 +155,50 @@ fn take_session_clears_in_memory() {
     assert!(taken.is_some());
     assert!(s.current_session().is_none());
 }
+
+use adsum_state::Block;
+
+#[test]
+fn block_user_text_roundtrips_via_serde_with_snake_case_tag() {
+    let b = Block::UserText { text: "hi".into() };
+    let json = serde_json::to_string(&b).unwrap();
+    assert!(json.contains(r#""type":"user_text""#));
+    assert!(json.contains(r#""text":"hi""#));
+    let decoded: Block = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, b);
+}
+
+#[test]
+fn block_tool_use_roundtrips_with_id_name_input() {
+    let b = Block::ToolUse {
+        id: "toolu_abc".into(),
+        name: "wiki_read".into(),
+        input: serde_json::json!({ "slug": "foo" }),
+    };
+    let json = serde_json::to_string(&b).unwrap();
+    let decoded: Block = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, b);
+}
+
+#[test]
+fn block_tool_result_roundtrips_with_is_error_default_false() {
+    let b = Block::ToolResult {
+        tool_use_id: "toolu_abc".into(),
+        content: "page body".into(),
+        is_error: false,
+    };
+    let json = serde_json::to_string(&b).unwrap();
+    let decoded: Block = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, b);
+}
+
+#[test]
+fn block_skill_invocation_roundtrips() {
+    let b = Block::SkillInvocation {
+        name: "query".into(),
+        args: "what's in my wiki?".into(),
+    };
+    let json = serde_json::to_string(&b).unwrap();
+    let decoded: Block = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, b);
+}

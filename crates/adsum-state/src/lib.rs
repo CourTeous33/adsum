@@ -48,6 +48,28 @@ pub struct Message {
     pub content: String,
 }
 
+/// A single semantic chunk of a turn. Turns are sequences of blocks; v2
+/// persistence stores them in order. The `(ToolUse.id, ToolResult.tool_use_id)`
+/// pair matches calls to results in the transcript.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Block {
+    UserText { text: String },
+    AssistantText { text: String },
+    SkillInvocation { name: String, args: String },
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+        #[serde(default)]
+        is_error: bool,
+    },
+}
+
 impl Session {
     pub fn new() -> Self {
         Self {
