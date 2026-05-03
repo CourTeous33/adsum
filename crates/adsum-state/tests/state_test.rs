@@ -216,3 +216,59 @@ fn block_tool_result_with_missing_is_error_defaults_to_false() {
         }
     );
 }
+
+#[test]
+fn turn_final_assistant_text_returns_last_assistant_block() {
+    let turn = adsum_state::Turn {
+        blocks: vec![
+            adsum_state::Block::UserText { text: "q".into() },
+            adsum_state::Block::AssistantText { text: "first ".into() },
+            adsum_state::Block::ToolUse {
+                id: "t1".into(),
+                name: "x".into(),
+                input: serde_json::json!({}),
+            },
+            adsum_state::Block::ToolResult {
+                tool_use_id: "t1".into(),
+                content: "ok".into(),
+                is_error: false,
+            },
+            adsum_state::Block::AssistantText { text: "second".into() },
+        ],
+        user_text: String::new(),
+        assistant_text: String::new(),
+        kind: adsum_state::TurnKind::Ok,
+        model: adsum_settings::Settings::default().default_model,
+        timestamp: std::time::SystemTime::now(),
+    };
+    // Final assistant text concatenates all assistant text blocks (the API
+    // can split text across turns when interleaved with tool calls).
+    assert_eq!(turn.final_assistant_text(), "first second");
+}
+
+#[test]
+fn turn_user_text_block_returns_first_user_block_text() {
+    let turn = adsum_state::Turn {
+        blocks: vec![adsum_state::Block::UserText { text: "hello".into() }],
+        user_text: String::new(),
+        assistant_text: String::new(),
+        kind: adsum_state::TurnKind::Ok,
+        model: adsum_settings::Settings::default().default_model,
+        timestamp: std::time::SystemTime::now(),
+    };
+    assert_eq!(turn.user_text_block(), Some("hello"));
+}
+
+#[test]
+fn turn_helpers_handle_empty_blocks() {
+    let turn = adsum_state::Turn {
+        blocks: vec![],
+        user_text: String::new(),
+        assistant_text: String::new(),
+        kind: adsum_state::TurnKind::Ok,
+        model: adsum_settings::Settings::default().default_model,
+        timestamp: std::time::SystemTime::now(),
+    };
+    assert_eq!(turn.final_assistant_text(), "");
+    assert_eq!(turn.user_text_block(), None);
+}

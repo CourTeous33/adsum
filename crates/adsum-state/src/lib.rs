@@ -88,6 +88,32 @@ pub enum Block {
     },
 }
 
+impl Turn {
+    /// Concatenation of all `Block::AssistantText` bodies in this turn, in
+    /// order. Empty string if there are none. The provider may interleave
+    /// assistant text with tool calls; this returns the user-visible "answer."
+    pub fn final_assistant_text(&self) -> String {
+        let mut out = String::new();
+        for block in &self.blocks {
+            if let Block::AssistantText { text } = block {
+                out.push_str(text);
+            }
+        }
+        out
+    }
+
+    /// The first `Block::UserText` body in this turn. Used by the dashboard's
+    /// "first user message preview" rendering. Returns None if the turn has
+    /// no user-text block (shouldn't happen for sessions started via
+    /// `AppState::begin_turn`, but defensive).
+    pub fn user_text_block(&self) -> Option<&str> {
+        self.blocks.iter().find_map(|b| match b {
+            Block::UserText { text } => Some(text.as_str()),
+            _ => None,
+        })
+    }
+}
+
 impl Session {
     pub fn new() -> Self {
         Self {
