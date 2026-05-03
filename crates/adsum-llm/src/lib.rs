@@ -11,7 +11,10 @@ use adsum_state::Message;
 use tokio_util::sync::CancellationToken;
 
 mod anthropic;
+mod event;
 mod openai;
+
+pub use event::{ProviderEvent, StopReason};
 
 pub const SYSTEM_PROMPT: &str =
     "You are Adsum, a fast assistant summoned by hotkey. Answer concisely.";
