@@ -170,3 +170,20 @@ fn rejects_session_with_schema_version_above_known() {
     let err = adsum_state::persistence::load_session_from(dir.path(), "x").unwrap_err();
     assert!(err.to_string().contains("schema_version"));
 }
+
+#[test]
+fn rejects_session_with_schema_version_u64_overflow() {
+    // 4294967296 = 2^32; under the old `as u32` truncation this would wrap to
+    // 0 and slip past the version-rejection check. Verify it is caught.
+    let dir = tempfile::tempdir().unwrap();
+    let json = r#"{
+        "schema_version": 4294967296,
+        "id": "x",
+        "created_at": { "secs_since_epoch": 1, "nanos_since_epoch": 0 },
+        "turns": []
+    }"#;
+    std::fs::write(dir.path().join("x.json"), json).unwrap();
+
+    let err = adsum_state::persistence::load_session_from(dir.path(), "x").unwrap_err();
+    assert!(err.to_string().contains("schema_version"));
+}

@@ -2,7 +2,9 @@
 //!
 //! Sessions are written to `~/Library/Application Support/Adsum/conversations/`
 //! on macOS (resolved via the `dirs` crate). One JSON file per session,
-//! filename is `{session.id}.json`. Schema is unversioned in v0.
+//! filename is `{session.id}.json`. Schema is versioned via `Session::schema_version`. Loader migrates
+//! v1 files (no `schema_version`) to v2 in-memory; future versions
+//! beyond `KNOWN_SCHEMA_VERSION` are rejected on read.
 
 use crate::Session;
 use serde::{Deserialize, Serialize};
@@ -50,17 +52,19 @@ pub fn load_session_from(dir: &std::path::Path, id: &str) -> io::Result<Session>
 pub(crate) fn parse_session_json(json: &str) -> Result<Session, String> {
     let value: serde_json::Value =
         serde_json::from_str(json).map_err(|e| e.to_string())?;
-    let version = value
+    let version_u64 = value
         .get("schema_version")
         .and_then(|v| v.as_u64())
-        .unwrap_or(1) as u32;
+        .unwrap_or(1);
 
-    if version > crate::KNOWN_SCHEMA_VERSION {
+    if version_u64 > crate::KNOWN_SCHEMA_VERSION as u64 {
         return Err(format!(
-            "schema_version {version} is newer than supported ({})",
+            "schema_version {version_u64} is newer than supported ({})",
             crate::KNOWN_SCHEMA_VERSION
         ));
     }
+
+    let version = version_u64 as u32; // safe: we just bounded it ≤ KNOWN_SCHEMA_VERSION (= 2)
 
     if version == crate::KNOWN_SCHEMA_VERSION {
         return serde_json::from_value(value).map_err(|e| e.to_string());
@@ -72,19 +76,17 @@ pub(crate) fn parse_session_json(json: &str) -> Result<Session, String> {
         serde_json::from_value(value).map_err(|e| e.to_string())?;
     session.schema_version = crate::KNOWN_SCHEMA_VERSION;
     for turn in session.turns.iter_mut() {
-        // Synthesize blocks from legacy fields. Only run when blocks is empty
-        // (v1 files); v2 files would already have populated blocks above.
-        if turn.blocks.is_empty() {
-            if !turn.user_text.is_empty() {
-                turn.blocks.push(crate::Block::UserText {
-                    text: turn.user_text.clone(),
-                });
-            }
-            if !turn.assistant_text.is_empty() {
-                turn.blocks.push(crate::Block::AssistantText {
-                    text: turn.assistant_text.clone(),
-                });
-            }
+        // v1 files never contain a "blocks" field, so synthesize blocks from
+        // the legacy user_text / assistant_text fields unconditionally.
+        if !turn.user_text.is_empty() {
+            turn.blocks.push(crate::Block::UserText {
+                text: turn.user_text.clone(),
+            });
+        }
+        if !turn.assistant_text.is_empty() {
+            turn.blocks.push(crate::Block::AssistantText {
+                text: turn.assistant_text.clone(),
+            });
         }
     }
     Ok(session)
