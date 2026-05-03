@@ -21,13 +21,16 @@ pub(crate) fn render_blocks(renderer: &Renderer, blocks: &[Block]) -> AnyElement
         let suppress_highlights = renderer.streaming_cursor
             && idx == last_idx
             && matches!(block, Block::CodeBlock { .. });
-        if suppress_highlights {
+        let child: AnyElement = if suppress_highlights {
             if let Block::CodeBlock { lang, content, .. } = block {
-                col = col.child(render_code_block(lang.as_deref(), content, &[]));
-                continue;
+                render_code_block(lang.as_deref(), content, &[])
+            } else {
+                render_block(renderer, block)
             }
-        }
-        col = col.child(render_block(renderer, block));
+        } else {
+            render_block(renderer, block)
+        };
+        col = col.child(div().w_full().min_w_0().child(child));
     }
 
     if renderer.streaming_cursor {
@@ -153,12 +156,19 @@ fn render_code_block(
             .into_any_element()
     };
     div()
+        .id("code-block-scroll")
+        .w_full()
+        .min_w_0()
         .my_2()
-        .px_3()
-        .py_2()
-        .rounded(px(6.0))
-        .bg(adsum_tokens::code_bg())
-        .child(body)
+        .overflow_x_scroll()
+        .child(
+            div()
+                .px_3()
+                .py_2()
+                .rounded(px(6.0))
+                .bg(adsum_tokens::code_bg())
+                .child(body),
+        )
         .into_any_element()
 }
 
@@ -208,6 +218,7 @@ fn render_table(headers: &[Vec<Run>], rows: &[Vec<Vec<Run>>]) -> AnyElement {
         hr = hr.child(
             div()
                 .flex_1()
+                .min_w_0()
                 .px_3()
                 .font_weight(FontWeight::BOLD)
                 .child(runs_to_styled_text(cell_runs)),
@@ -223,7 +234,13 @@ fn render_table(headers: &[Vec<Run>], rows: &[Vec<Vec<Run>>]) -> AnyElement {
             br = br.border_b_1().border_color(adsum_tokens::border());
         }
         for cell_runs in row {
-            br = br.child(div().flex_1().px_3().child(runs_to_styled_text(cell_runs)));
+            br = br.child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .px_3()
+                    .child(runs_to_styled_text(cell_runs)),
+            );
         }
         tbl = tbl.child(br);
     }
