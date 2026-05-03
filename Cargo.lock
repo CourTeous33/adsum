@@ -92,6 +92,7 @@ version = "0.1.2"
 dependencies = [
  "adsum-settings",
  "adsum-state",
+ "adsum-tools",
  "async-channel 2.5.0",
  "eventsource-stream",
  "futures-util",
