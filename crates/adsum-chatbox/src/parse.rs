@@ -24,18 +24,19 @@ pub fn parse_chatbox_input(input: &str, store: &SkillStore) -> ChatboxInput {
             None => (stripped, ""),
         };
         if store.find(slug).is_some() {
-            let formatted = if args.is_empty() {
-                format!("User invoked /{slug}.")
-            } else {
-                format!("User invoked /{slug}.\n\n{args}")
-            };
+            // The user's bubble + the LLM both see the raw input. The skill
+            // body is in the system prompt (via compose_system_prompt), which
+            // already documents the slash convention — no extra bias prefix
+            // needed.
             return ChatboxInput {
                 blocks: vec![
                     Block::SkillInvocation {
                         name: slug.to_string(),
                         args: args.to_string(),
                     },
-                    Block::UserText { text: formatted },
+                    Block::UserText {
+                        text: input.to_string(),
+                    },
                 ],
                 display_text: input.to_string(),
             };
@@ -78,7 +79,7 @@ mod tests {
     }
 
     #[test]
-    fn known_slash_emits_skill_invocation_plus_formatted_user_text() {
+    fn known_slash_user_text_preserves_raw_input() {
         let (store, _dir) = store_with(&["query"]);
         let parsed = parse_chatbox_input("/query what is X?", &store);
         assert_eq!(parsed.blocks.len(), 2);
@@ -86,17 +87,17 @@ mod tests {
             matches!(&parsed.blocks[0], Block::SkillInvocation { name, args } if name == "query" && args == "what is X?")
         );
         assert!(
-            matches!(&parsed.blocks[1], Block::UserText { text } if text.contains("User invoked /query.") && text.contains("what is X?"))
+            matches!(&parsed.blocks[1], Block::UserText { text } if text == "/query what is X?")
         );
     }
 
     #[test]
-    fn known_slash_with_no_args_emits_short_user_text() {
+    fn known_slash_with_no_args_user_text_is_just_slash_command() {
         let (store, _dir) = store_with(&["query"]);
         let parsed = parse_chatbox_input("/query", &store);
         assert_eq!(parsed.blocks.len(), 2);
         assert!(
-            matches!(&parsed.blocks[1], Block::UserText { text } if text == "User invoked /query.")
+            matches!(&parsed.blocks[1], Block::UserText { text } if text == "/query")
         );
     }
 
