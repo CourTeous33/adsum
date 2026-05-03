@@ -3,12 +3,15 @@ use adsum_llm::LlmService;
 use adsum_settings::Settings;
 use adsum_state::AppState;
 use gpui::{
-    div, point, prelude::*, px, size, App, Bounds, Context, FocusHandle, Focusable, KeyDownEvent,
-    Pixels, Render, Subscription, Window, WindowBackgroundAppearance, WindowBounds, WindowKind,
-    WindowOptions,
+    App, Bounds, Context, FocusHandle, Focusable, KeyDownEvent, Pixels, Render, Subscription,
+    Window, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, div, point,
+    prelude::*, px, size,
 };
 use std::sync::{Arc, Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
+
+mod parse;
+pub use parse::{ChatboxInput, parse_chatbox_input};
 
 pub struct Chatbox {
     current_text: String,
@@ -19,6 +22,7 @@ pub struct Chatbox {
     llm: Arc<LlmService>,
     in_flight_slot: Arc<Mutex<Option<CancellationToken>>>,
     conversation_slot: Arc<Mutex<Option<gpui::WindowHandle<Conversation>>>>,
+    skills: Arc<adsum_skills::SkillStore>,
 }
 
 impl Focusable for Chatbox {
@@ -35,7 +39,7 @@ impl Chatbox {
         llm: Arc<LlmService>,
         in_flight_slot: Arc<Mutex<Option<CancellationToken>>>,
         conversation_slot: Arc<Mutex<Option<gpui::WindowHandle<Conversation>>>>,
-        _skills: Arc<adsum_skills::SkillStore>,
+        skills: Arc<adsum_skills::SkillStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -56,6 +60,7 @@ impl Chatbox {
             llm,
             in_flight_slot,
             conversation_slot,
+            skills,
         }
     }
 
@@ -116,15 +121,23 @@ impl Chatbox {
                 (s.default_model.clone(), key)
             };
 
-            // 2. Push InProgress turn into AppState. begin_turn appends a
-            //    Block::UserText for the new user message into the in-flight
-            //    turn, so blocks_for_llm() already includes it — no manual
-            //    push needed here (would cause a duplicate).
-            let user_text = std::mem::take(&mut self.current_text);
-            self.state
-                .lock()
-                .unwrap()
-                .begin_turn(user_text, model.clone());
+            // 2. Parse the input through the slash-command parser. Then push
+            //    an InProgress turn into AppState. begin_turn appends a single
+            //    Block::UserText built from display_text; we OVERWRITE that
+            //    turn's blocks with parsed.blocks, which may include a leading
+            //    SkillInvocation followed by a formatted UserText.
+            let raw_input = std::mem::take(&mut self.current_text);
+            let parsed = parse::parse_chatbox_input(&raw_input, &self.skills);
+            {
+                let mut st = self.state.lock().unwrap();
+                if let Some(idx) = st.begin_turn(parsed.display_text.clone(), model.clone()) {
+                    if let Some(session) = st.current_session_mut() {
+                        if let Some(turn) = session.turns.get_mut(idx) {
+                            turn.blocks = parsed.blocks.clone();
+                        }
+                    }
+                }
+            }
 
             // 3. Snapshot the full block list for this request.
             let blocks: Vec<adsum_state::Block> = {
@@ -149,11 +162,13 @@ impl Chatbox {
             // 5. Spawn the request: cancel token, channel, fire LlmRequest.
             let cancel = CancellationToken::new();
             let (chunks_tx, chunks_rx) = async_channel::unbounded::<adsum_llm::LlmChunk>();
+            let system_prompt =
+                adsum_llm::compose_system_prompt(adsum_llm::SYSTEM_PROMPT, &self.skills.list());
             self.llm.send(adsum_llm::LlmRequest {
                 blocks,
                 model,
                 api_key,
-                system: adsum_llm::SYSTEM_PROMPT.to_string(),
+                system: system_prompt,
                 chunks_tx,
                 cancel: cancel.clone(),
             });

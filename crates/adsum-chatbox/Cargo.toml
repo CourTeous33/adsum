@@ -15,3 +15,6 @@ adsum-settings = { path = "../adsum-settings" }
 adsum-skills   = { path = "../adsum-skills" }
 async-channel  = { workspace = true }
 tokio-util     = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

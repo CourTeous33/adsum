@@ -185,6 +185,55 @@ impl ProviderError {
     }
 }
 
+use adsum_skills::Skill;
+
+/// Compose the request's system prompt by appending each skill's
+/// `when-to-use` line and body under a top-level `# Available skills` section.
+/// Returns `base` unchanged when `skills` is empty.
+pub fn compose_system_prompt(base: &str, skills: &[Skill]) -> String {
+    if skills.is_empty() {
+        return base.to_string();
+    }
+    let mut out = String::with_capacity(
+        base.len() + skills.iter().map(|s| s.body.len() + 256).sum::<usize>(),
+    );
+    out.push_str(base);
+    out.push_str("\n\n# Available skills\n\nYou have these skills available. Each describes a workflow you can follow.\n");
+    for skill in skills {
+        out.push_str(&format!(
+            "\n## /{}\n{}\n\n{}\n",
+            skill.slug, skill.when_to_use, skill.body
+        ));
+    }
+    out
+}
+
+#[cfg(test)]
+mod compose_tests {
+    use super::*;
+
+    #[test]
+    fn empty_skills_returns_base_unchanged() {
+        assert_eq!(compose_system_prompt("base", &[]), "base");
+    }
+
+    #[test]
+    fn single_skill_appends_section() {
+        let skill = adsum_skills::Skill {
+            slug: "query".into(),
+            name: "query".into(),
+            description: "x".into(),
+            when_to_use: "when X".into(),
+            body: "BODY".into(),
+        };
+        let out = compose_system_prompt("base", &[skill]);
+        assert!(out.contains("# Available skills"));
+        assert!(out.contains("## /query"));
+        assert!(out.contains("when X"));
+        assert!(out.contains("BODY"));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
