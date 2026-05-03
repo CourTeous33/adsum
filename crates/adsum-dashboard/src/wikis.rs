@@ -15,11 +15,35 @@ pub enum Selection {
     Page(String),
 }
 
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+enum RowMode {
+    Idle,
+    Renaming {
+        slug: String,
+        draft: String,
+        error: Option<String>,
+    },
+    ConfirmingDelete {
+        slug: String,
+        error: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+enum HeaderMode {
+    Idle,
+    Creating { draft: String, error: Option<String> },
+}
+
 pub struct WikisView {
     wiki: Arc<Mutex<WikiStore>>,
     pages: Vec<PageMeta>,
     selection: Selection,
     content: Result<String, ContentError>,
+    row_mode: RowMode,
+    header_mode: HeaderMode,
 }
 
 #[derive(Debug, Clone)]
@@ -34,6 +58,8 @@ impl WikisView {
             pages,
             selection: Selection::Index,
             content,
+            row_mode: RowMode::Idle,
+            header_mode: HeaderMode::Idle,
         }
     }
 
@@ -44,6 +70,8 @@ impl WikisView {
         self.pages = list_or_log_err(&self.wiki);
         self.selection = Selection::Index;
         self.content = read_for(&self.wiki, &self.selection);
+        self.row_mode = RowMode::Idle;
+        self.header_mode = HeaderMode::Idle;
     }
 
     fn select(&mut self, sel: Selection, cx: &mut Context<crate::Dashboard>) {
@@ -52,6 +80,24 @@ impl WikisView {
         }
         self.selection = sel.clone();
         self.content = read_for(&self.wiki, &sel);
+        cx.notify();
+    }
+
+    /// Re-read the page list and content for `next_selection`. Resets
+    /// `row_mode` and `header_mode` to `Idle`. Caller picks the selection
+    /// to land on (typically: `Page(new)` after create / rename, `Index`
+    /// after delete-of-current).
+    #[allow(dead_code)]
+    fn refresh_after_mutation(
+        &mut self,
+        next_selection: Selection,
+        cx: &mut Context<crate::Dashboard>,
+    ) {
+        self.pages = list_or_log_err(&self.wiki);
+        self.selection = next_selection;
+        self.content = read_for(&self.wiki, &self.selection);
+        self.row_mode = RowMode::Idle;
+        self.header_mode = HeaderMode::Idle;
         cx.notify();
     }
 
