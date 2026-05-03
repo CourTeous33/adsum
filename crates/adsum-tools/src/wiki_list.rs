@@ -20,7 +20,7 @@ impl Tool for WikiListTool {
         ToolSchema {
             name: "wiki_list",
             description: "List all wiki pages with their slugs and last-modified timestamps. Use this when you don't know what's in the wiki.",
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
+            input_schema: json!({ "type": "object", "properties": {} }),
         }
     }
 
