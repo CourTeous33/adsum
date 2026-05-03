@@ -54,6 +54,7 @@ dependencies = [
  "adsum-tokens",
  "async-channel 2.5.0",
  "gpui",
+ "tempfile",
  "tokio-util",
 ]
 
@@ -94,6 +95,7 @@ name = "adsum-llm"
 version = "0.1.2"
 dependencies = [
  "adsum-settings",
+ "adsum-skills",
  "adsum-state",
  "adsum-tools",
  "async-channel 2.5.0",
