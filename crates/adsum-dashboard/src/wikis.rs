@@ -182,6 +182,7 @@ fn format_wiki_error(err: &WikiError, sel: &Selection) -> String {
         WikiError::PageNotFound(slug) => format!("Page not found: {slug}"),
         WikiError::Io(io_err) => format!("Could not read {}: {io_err}", label_for(sel)),
         WikiError::InvalidSlug(slug) => format!("Invalid slug: {slug}"),
+        WikiError::PageAlreadyExists(slug) => format!("Page already exists: {slug}"),
     }
 }
 

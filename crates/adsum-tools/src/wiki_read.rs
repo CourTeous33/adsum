@@ -49,6 +49,7 @@ impl Tool for WikiReadTool {
             Err(WikiError::PageNotFound(s)) => Err(ToolError::NotFound(format!("slug={s}"))),
             Err(WikiError::InvalidSlug(s)) => Err(ToolError::InvalidInput(format!("slug={s}"))),
             Err(WikiError::Io(err)) => Err(ToolError::Io(err.to_string())),
+            Err(WikiError::PageAlreadyExists(s)) => Err(ToolError::InvalidInput(s)),
         }
     }
 }

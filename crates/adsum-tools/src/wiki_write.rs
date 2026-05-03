@@ -114,6 +114,7 @@ impl Tool for WikiWriteTool {
             Err(WikiError::InvalidSlug(s)) => Err(ToolError::InvalidInput(s)),
             Err(WikiError::PageNotFound(s)) => Err(ToolError::NotFound(s)),
             Err(WikiError::Io(err)) => Err(ToolError::Io(err.to_string())),
+            Err(WikiError::PageAlreadyExists(s)) => Err(ToolError::InvalidInput(s)),
         }
     }
 }
