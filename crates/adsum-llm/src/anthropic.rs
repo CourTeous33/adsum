@@ -34,21 +34,43 @@ pub(crate) struct AgentMessage<'a> {
     content: Vec<AgentContent<'a>>,
 }
 
+/// `cache_control: {"type": "ephemeral"}` marks a block as cacheable in
+/// Anthropic's prompt-cache (5-minute TTL). The cache covers everything up
+/// to AND including the marked block, so attaching it to the LAST tool def
+/// caches the whole tools list, and attaching it to the LAST content block
+/// of the LAST message caches the whole conversation history. Cached
+/// prefixes cost ~10× less than fresh input on subsequent agent-loop
+/// iterations — the difference between a 24 KB tool_result paid 8× and
+/// paid 1× + cached 7×.
+#[derive(Serialize, Clone, Copy)]
+struct CacheControl {
+    #[serde(rename = "type")]
+    kind: &'static str,
+}
+
+const EPHEMERAL: CacheControl = CacheControl { kind: "ephemeral" };
+
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum AgentContent<'a> {
     Text {
         text: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
     },
     ToolUse {
         id: &'a str,
         name: &'a str,
         input: &'a serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
     },
     ToolResult {
         tool_use_id: &'a str,
         content: &'a str,
         is_error: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
     },
 }
 
@@ -57,6 +79,8 @@ struct AgentToolDef<'a> {
     name: &'a str,
     description: &'a str,
     input_schema: &'a serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<CacheControl>,
 }
 
 /// Translate `&[Block]` into Anthropic's wire-format messages. Consecutive
@@ -66,11 +90,29 @@ pub(crate) fn blocks_to_anthropic_messages(blocks: &[Block]) -> Vec<AgentMessage
     let mut out: Vec<AgentMessage> = Vec::new();
     for block in blocks {
         let (role, content) = match block {
-            Block::UserText { text } => ("user", AgentContent::Text { text }),
-            Block::AssistantText { text } => ("assistant", AgentContent::Text { text }),
-            Block::ToolUse { id, name, input } => {
-                ("assistant", AgentContent::ToolUse { id, name, input })
-            }
+            Block::UserText { text } => (
+                "user",
+                AgentContent::Text {
+                    text,
+                    cache_control: None,
+                },
+            ),
+            Block::AssistantText { text } => (
+                "assistant",
+                AgentContent::Text {
+                    text,
+                    cache_control: None,
+                },
+            ),
+            Block::ToolUse { id, name, input } => (
+                "assistant",
+                AgentContent::ToolUse {
+                    id,
+                    name,
+                    input,
+                    cache_control: None,
+                },
+            ),
             Block::ToolResult {
                 tool_use_id,
                 content,
@@ -81,6 +123,7 @@ pub(crate) fn blocks_to_anthropic_messages(blocks: &[Block]) -> Vec<AgentMessage
                     tool_use_id,
                     content,
                     is_error: *is_error,
+                    cache_control: None,
                 },
             ),
             Block::SkillInvocation { .. } => continue,
@@ -91,6 +134,20 @@ pub(crate) fn blocks_to_anthropic_messages(blocks: &[Block]) -> Vec<AgentMessage
                 role,
                 content: vec![content],
             }),
+        }
+    }
+    // Mark the last content block of the last message as the cache breakpoint
+    // — Anthropic caches everything up to and including this block. On the
+    // next iteration only the new blocks past this breakpoint pay full price.
+    if let Some(last_msg) = out.last_mut() {
+        if let Some(last_content) = last_msg.content.last_mut() {
+            match last_content {
+                AgentContent::Text { cache_control, .. }
+                | AgentContent::ToolUse { cache_control, .. }
+                | AgentContent::ToolResult { cache_control, .. } => {
+                    *cache_control = Some(EPHEMERAL);
+                }
+            }
         }
     }
     out
@@ -106,14 +163,22 @@ pub async fn agent_stream(
     tools: &[ToolSchema],
 ) -> Result<impl Stream<Item = Result<ProviderEvent, ProviderError>>, ProviderError> {
     let messages = blocks_to_anthropic_messages(blocks);
-    let tool_defs: Vec<AgentToolDef> = tools
+    let mut tool_defs: Vec<AgentToolDef> = tools
         .iter()
         .map(|t| AgentToolDef {
             name: t.name,
             description: t.description,
             input_schema: &t.input_schema,
+            cache_control: None,
         })
         .collect();
+    // Cache the tool definitions: they're identical across every iteration
+    // of an agent loop, so caching the prefix saves the full input cost on
+    // re-sends. Mark the LAST tool def — Anthropic caches everything before
+    // and including this breakpoint.
+    if let Some(last) = tool_defs.last_mut() {
+        last.cache_control = Some(EPHEMERAL);
+    }
 
     let body = AgentRequestBody {
         model,
@@ -422,5 +487,35 @@ mod tests {
         let msgs = blocks_to_anthropic_messages(&blocks);
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].role, "user");
+    }
+
+    #[test]
+    fn last_message_content_block_carries_cache_control_breakpoint() {
+        use adsum_state::Block;
+        let blocks = vec![
+            Block::UserText { text: "first".into() },
+            Block::AssistantText {
+                text: "second".into(),
+            },
+            Block::UserText { text: "third".into() },
+        ];
+        let msgs = blocks_to_anthropic_messages(&blocks);
+        let json = serde_json::to_string(&msgs).unwrap();
+        // The last block ("third") should carry cache_control; earlier ones
+        // should not.
+        let count = json.matches(r#""cache_control":{"type":"ephemeral"}"#).count();
+        assert_eq!(
+            count, 1,
+            "expected exactly one cache_control breakpoint on the last content block, got {count} in {json}"
+        );
+        // And it should appear in the LAST message (position-wise).
+        let last_block_idx = json
+            .rfind(r#""cache_control":{"type":"ephemeral"}"#)
+            .unwrap();
+        let third_idx = json.rfind(r#""text":"third""#).unwrap();
+        assert!(
+            third_idx < last_block_idx,
+            "cache_control should be inside the same content block as 'third'"
+        );
     }
 }
