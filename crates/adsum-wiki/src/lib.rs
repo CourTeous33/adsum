@@ -144,6 +144,25 @@ impl WikiStore {
         }
     }
 
+    pub fn rename_page(&self, old_slug: &str, new_slug: &str) -> Result<(), WikiError> {
+        validate_slug(old_slug)?;
+        validate_slug(new_slug)?;
+        if old_slug == new_slug {
+            return Ok(());
+        }
+        let pages = self.root.join("pages");
+        let old_path = pages.join(format!("{old_slug}.md"));
+        let new_path = pages.join(format!("{new_slug}.md"));
+        if !old_path.exists() {
+            return Err(WikiError::PageNotFound(old_slug.to_string()));
+        }
+        if new_path.exists() {
+            return Err(WikiError::PageAlreadyExists(new_slug.to_string()));
+        }
+        std::fs::rename(old_path, new_path)?;
+        Ok(())
+    }
+
     pub fn read_page(&self, slug: &str) -> Result<String, WikiError> {
         let path = self.root.join("pages").join(format!("{slug}.md"));
         match std::fs::read_to_string(&path) {

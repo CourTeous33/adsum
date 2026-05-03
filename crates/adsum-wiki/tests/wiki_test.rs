@@ -274,3 +274,76 @@ fn delete_page_rejects_invalid_slug() {
     let result = store.delete_page("Bad Slug");
     assert!(matches!(result, Err(adsum_wiki::WikiError::InvalidSlug(_))));
 }
+
+#[test]
+fn rename_page_moves_file_preserving_content() {
+    let dir = tempdir().expect("tempdir");
+    let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
+
+    store.create_page("old", "body\n").expect("create");
+    store.rename_page("old", "new").expect("rename");
+
+    assert!(matches!(
+        store.read_page("old"),
+        Err(adsum_wiki::WikiError::PageNotFound(_))
+    ));
+    let body = store.read_page("new").expect("read renamed");
+    assert_eq!(body, "body\n");
+}
+
+#[test]
+fn rename_page_same_slug_is_noop_success() {
+    let dir = tempdir().expect("tempdir");
+    let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
+
+    store.create_page("same", "body").expect("create");
+    store.rename_page("same", "same").expect("rename same");
+
+    let body = store.read_page("same").expect("read");
+    assert_eq!(body, "body");
+}
+
+#[test]
+fn rename_page_returns_page_not_found_when_source_missing() {
+    let dir = tempdir().expect("tempdir");
+    let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
+
+    let result = store.rename_page("ghost", "target");
+    assert!(
+        matches!(&result, Err(adsum_wiki::WikiError::PageNotFound(s)) if s == "ghost"),
+        "expected PageNotFound for source, got {result:?}"
+    );
+}
+
+#[test]
+fn rename_page_returns_page_already_exists_when_dest_taken() {
+    let dir = tempdir().expect("tempdir");
+    let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
+
+    store.create_page("a", "first").expect("create a");
+    store.create_page("b", "second").expect("create b");
+
+    let result = store.rename_page("a", "b");
+    assert!(
+        matches!(&result, Err(adsum_wiki::WikiError::PageAlreadyExists(s)) if s == "b"),
+        "expected PageAlreadyExists for dest, got {result:?}"
+    );
+
+    // Both files must remain untouched on a rejected rename.
+    assert_eq!(store.read_page("a").expect("read a"), "first");
+    assert_eq!(store.read_page("b").expect("read b"), "second");
+}
+
+#[test]
+fn rename_page_rejects_invalid_slugs_in_either_position() {
+    let dir = tempdir().expect("tempdir");
+    let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
+
+    store.create_page("ok", "x").expect("create");
+
+    let bad_old = store.rename_page("Bad Slug", "ok2");
+    assert!(matches!(bad_old, Err(adsum_wiki::WikiError::InvalidSlug(_))));
+
+    let bad_new = store.rename_page("ok", "Bad New");
+    assert!(matches!(bad_new, Err(adsum_wiki::WikiError::InvalidSlug(_))));
+}
