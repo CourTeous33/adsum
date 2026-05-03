@@ -1,5 +1,5 @@
 [package]
-name = "adsum-caret"
+name = "adsum-ui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

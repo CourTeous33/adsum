@@ -4,7 +4,7 @@
 //!
 //! Real markdown rendering is the next spec; v1 is intentionally raw.
 
-use adsum_caret::{spawn_blink, Caret};
+use adsum_ui::caret::{spawn_blink, Caret};
 use adsum_wiki::{PageMeta, WikiError, WikiStore};
 use gpui::{
     div, prelude::*, px, svg, AnyElement, Context, FocusHandle, KeyDownEvent, MouseButton, Window,

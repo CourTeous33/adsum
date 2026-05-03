@@ -43,14 +43,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "adsum-caret"
-version = "0.2.0"
-dependencies = [
- "adsum-tokens",
- "gpui",
-]
-
-[[package]]
 name = "adsum-chatbox"
 version = "0.2.0"
 dependencies = [
@@ -60,6 +52,7 @@ dependencies = [
  "adsum-skills",
  "adsum-state",
  "adsum-tokens",
+ "adsum-ui",
  "async-channel 2.5.0",
  "gpui",
  "tempfile",
@@ -81,12 +74,12 @@ dependencies = [
 name = "adsum-dashboard"
 version = "0.2.0"
 dependencies = [
- "adsum-caret",
  "adsum-llm",
  "adsum-markdown",
  "adsum-settings",
  "adsum-state",
  "adsum-tokens",
+ "adsum-ui",
  "adsum-wiki",
  "gpui",
  "serde_json",
@@ -187,6 +180,14 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+]
+
+[[package]]
+name = "adsum-ui"
+version = "0.2.0"
+dependencies = [
+ "adsum-tokens",
+ "gpui",
 ]
 
 [[package]]

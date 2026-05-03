@@ -2,7 +2,6 @@
 resolver = "2"
 members = [
     "crates/adsum-app",
-    "crates/adsum-caret",
     "crates/adsum-chatbox",
     "crates/adsum-conversation",
     "crates/adsum-dashboard",
@@ -14,6 +13,7 @@ members = [
     "crates/adsum-state",
     "crates/adsum-tokens",
     "crates/adsum-tools",
+    "crates/adsum-ui",
     "crates/adsum-wiki",
 ]
 
