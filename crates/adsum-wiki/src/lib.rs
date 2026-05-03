@@ -132,6 +132,18 @@ impl WikiStore {
         Ok(())
     }
 
+    pub fn delete_page(&self, slug: &str) -> Result<(), WikiError> {
+        validate_slug(slug)?;
+        let path = self.root.join("pages").join(format!("{slug}.md"));
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                Err(WikiError::PageNotFound(slug.to_string()))
+            }
+            Err(err) => Err(WikiError::Io(err)),
+        }
+    }
+
     pub fn read_page(&self, slug: &str) -> Result<String, WikiError> {
         let path = self.root.join("pages").join(format!("{slug}.md"));
         match std::fs::read_to_string(&path) {

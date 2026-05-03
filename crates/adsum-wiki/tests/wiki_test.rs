@@ -238,3 +238,39 @@ fn create_page_rejects_invalid_slug_without_writing() {
     let pages = store.list_pages().expect("list");
     assert!(pages.is_empty(), "no file should have been written");
 }
+
+#[test]
+fn delete_page_removes_file_and_drops_from_list() {
+    let dir = tempdir().expect("tempdir");
+    let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
+
+    store.create_page("temp", "x").expect("create");
+    store.delete_page("temp").expect("delete");
+
+    let pages = store.list_pages().expect("list");
+    assert!(pages.is_empty(), "deleted page should not appear in list");
+
+    let result = store.read_page("temp");
+    assert!(matches!(result, Err(adsum_wiki::WikiError::PageNotFound(_))));
+}
+
+#[test]
+fn delete_page_returns_page_not_found_for_missing_slug() {
+    let dir = tempdir().expect("tempdir");
+    let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
+
+    let result = store.delete_page("never-existed");
+    assert!(
+        matches!(&result, Err(adsum_wiki::WikiError::PageNotFound(s)) if s == "never-existed"),
+        "expected PageNotFound, got {result:?}"
+    );
+}
+
+#[test]
+fn delete_page_rejects_invalid_slug() {
+    let dir = tempdir().expect("tempdir");
+    let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
+
+    let result = store.delete_page("Bad Slug");
+    assert!(matches!(result, Err(adsum_wiki::WikiError::InvalidSlug(_))));
+}
