@@ -4,13 +4,12 @@
 //!
 //! Real markdown rendering is the next spec; v1 is intentionally raw.
 
+use adsum_caret::{spawn_blink, Caret};
 use adsum_wiki::{PageMeta, WikiError, WikiStore};
 use gpui::{
-    div, prelude::*, px, svg, AnyElement, Context, FocusHandle, KeyDownEvent, MouseButton, Task,
-    Window,
+    div, prelude::*, px, svg, AnyElement, Context, FocusHandle, KeyDownEvent, MouseButton, Window,
 };
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Selection {
@@ -48,8 +47,7 @@ pub struct WikisView {
     row_mode: RowMode,
     header_mode: HeaderMode,
     create_focus: FocusHandle,
-    caret_visible: bool,
-    blink_task: Option<Task<()>>,
+    create_caret: Caret,
 }
 
 #[derive(Debug, Clone)]
@@ -67,8 +65,7 @@ impl WikisView {
             row_mode: RowMode::Idle,
             header_mode: HeaderMode::Idle,
             create_focus: cx.focus_handle(),
-            caret_visible: true,
-            blink_task: None,
+            create_caret: Caret::new(),
         }
     }
 
@@ -81,7 +78,7 @@ impl WikisView {
         self.content = read_for(&self.wiki, &self.selection);
         self.row_mode = RowMode::Idle;
         self.header_mode = HeaderMode::Idle;
-        self.blink_task = None;
+        self.create_caret.stop();
     }
 
     fn select(&mut self, sel: Selection, cx: &mut Context<crate::Dashboard>) {
@@ -99,43 +96,21 @@ impl WikisView {
             error: None,
         };
         self.row_mode = RowMode::Idle;
-        self.caret_visible = true;
+        self.create_caret.visible = true;
         window.focus(&self.create_focus, cx);
-        // Spawn a 500ms blink loop. Holding the Task<()> handle in
-        // self.blink_task means dropping it (on cancel/submit/refresh)
-        // cancels the loop. The loop also self-terminates when
-        // header_mode leaves Creating.
-        self.blink_task = Some(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(500))
-                    .await;
-                let still_creating = this
-                    .update(cx, |dashboard, cx| {
-                        if matches!(
-                            dashboard.wikis.header_mode,
-                            HeaderMode::Creating { .. }
-                        ) {
-                            dashboard.wikis.caret_visible = !dashboard.wikis.caret_visible;
-                            cx.notify();
-                            true
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap_or(false);
-                if !still_creating {
-                    break;
-                }
-            }
-        }));
+        let task = spawn_blink(
+            cx,
+            |d: &mut crate::Dashboard| &mut d.wikis.create_caret,
+            |d| matches!(d.wikis.header_mode, HeaderMode::Creating { .. }),
+        );
+        self.create_caret.set_task(task);
         cx.notify();
     }
 
     fn cancel_create(&mut self, cx: &mut Context<crate::Dashboard>) {
         if matches!(self.header_mode, HeaderMode::Creating { .. }) {
             self.header_mode = HeaderMode::Idle;
-            self.blink_task = None;
+            self.create_caret.stop();
             cx.notify();
         }
     }
@@ -223,13 +198,6 @@ impl WikisView {
             adsum_tokens::text_primary()
         };
         let focus_handle = self.create_focus.clone();
-        // Hold the layout slot constant so blinking doesn't shift the row;
-        // toggle color between accent and transparent (= bg) instead.
-        let caret_color = if self.caret_visible {
-            adsum_tokens::accent()
-        } else {
-            adsum_tokens::bg_primary()
-        };
         let mut row = div()
             .flex()
             .flex_col()
@@ -251,7 +219,7 @@ impl WikisView {
                         },
                     ))
                     .child(div().text_color(display_color).child(display))
-                    .child(div().ml_1().text_color(caret_color).child("▌")),
+                    .child(div().ml_1().child(self.create_caret.render())),
             );
         if let Some(msg) = error {
             row = row.child(
@@ -280,7 +248,7 @@ impl WikisView {
         self.content = read_for(&self.wiki, &self.selection);
         self.row_mode = RowMode::Idle;
         self.header_mode = HeaderMode::Idle;
-        self.blink_task = None;
+        self.create_caret.stop();
         cx.notify();
     }
 

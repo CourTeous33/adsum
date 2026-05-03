@@ -43,6 +43,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "adsum-caret"
+version = "0.2.0"
+dependencies = [
+ "adsum-tokens",
+ "gpui",
+]
+
+[[package]]
 name = "adsum-chatbox"
 version = "0.2.0"
 dependencies = [
@@ -73,6 +81,7 @@ dependencies = [
 name = "adsum-dashboard"
 version = "0.2.0"
 dependencies = [
+ "adsum-caret",
  "adsum-llm",
  "adsum-markdown",
  "adsum-settings",

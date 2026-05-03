@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/adsum-app",
+    "crates/adsum-caret",
     "crates/adsum-chatbox",
     "crates/adsum-conversation",
     "crates/adsum-dashboard",
