@@ -1,6 +1,6 @@
 //! Integration tests for AppState's streaming-aware API.
 
-use adsum_state::{AppState, ModelId, Provider, Role, SummonAction, TurnKind};
+use adsum_state::{AppState, Block, ModelId, Provider, Role, SummonAction, TurnKind};
 
 fn test_model() -> ModelId {
     ModelId {
@@ -156,8 +156,6 @@ fn take_session_clears_in_memory() {
     assert!(s.current_session().is_none());
 }
 
-use adsum_state::Block;
-
 #[test]
 fn block_user_text_roundtrips_via_serde_with_snake_case_tag() {
     let b = Block::UserText { text: "hi".into() };
@@ -201,4 +199,20 @@ fn block_skill_invocation_roundtrips() {
     let json = serde_json::to_string(&b).unwrap();
     let decoded: Block = serde_json::from_str(&json).unwrap();
     assert_eq!(decoded, b);
+}
+
+#[test]
+fn block_tool_result_with_missing_is_error_defaults_to_false() {
+    // Legacy JSON (or model output) may omit the is_error field.
+    // serde(default) should fill it as false.
+    let json = r#"{"type":"tool_result","tool_use_id":"toolu_abc","content":"ok"}"#;
+    let decoded: Block = serde_json::from_str(json).unwrap();
+    assert_eq!(
+        decoded,
+        Block::ToolResult {
+            tool_use_id: "toolu_abc".into(),
+            content: "ok".into(),
+            is_error: false,
+        }
+    );
 }
