@@ -33,8 +33,8 @@ impl Render for Conversation {
                     s.turns
                         .iter()
                         .map(|t| TurnSnapshot {
-                            user_text: t.user_text.clone(),
-                            assistant_text: t.assistant_text.clone(),
+                            user_text: t.user_text_block().unwrap_or("").to_string(),
+                            assistant_text: t.final_assistant_text(),
                             kind: t.kind.clone(),
                         })
                         .collect()

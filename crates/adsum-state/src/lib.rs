@@ -25,15 +25,7 @@ pub const KNOWN_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Turn {
-    /// Block sequence. Source of truth for v2.
-    #[serde(default)]
     pub blocks: Vec<Block>,
-    /// LEGACY (v1 compat). Populated alongside `blocks` until Task 4 drops them.
-    #[serde(default)]
-    pub user_text: String,
-    /// LEGACY (v1 compat). Populated alongside `blocks` until Task 4 drops them.
-    #[serde(default)]
-    pub assistant_text: String,
     pub kind: TurnKind,
     pub model: ModelId,
     pub timestamp: SystemTime,
@@ -132,23 +124,25 @@ impl Session {
     pub fn messages_for_llm(&self) -> Vec<Message> {
         let mut out = Vec::new();
         for turn in &self.turns {
+            let user_text = turn.user_text_block().unwrap_or("").to_string();
             match &turn.kind {
                 TurnKind::Error { .. } => continue,
-                TurnKind::Cancelled if turn.assistant_text.is_empty() => continue,
+                TurnKind::Cancelled if turn.final_assistant_text().is_empty() => continue,
                 TurnKind::InProgress => {
                     out.push(Message {
                         role: Role::User,
-                        content: turn.user_text.clone(),
+                        content: user_text,
                     });
                 }
                 TurnKind::Ok | TurnKind::Cancelled => {
+                    let assistant = turn.final_assistant_text();
                     out.push(Message {
                         role: Role::User,
-                        content: turn.user_text.clone(),
+                        content: user_text,
                     });
                     out.push(Message {
                         role: Role::Assistant,
-                        content: turn.assistant_text.clone(),
+                        content: assistant,
                     });
                 }
             }
@@ -215,9 +209,7 @@ impl AppState {
     pub fn begin_turn(&mut self, user_text: String, model: ModelId) -> Option<usize> {
         let session = self.current_session.as_mut()?;
         session.turns.push(Turn {
-            blocks: vec![Block::UserText { text: user_text.clone() }],
-            user_text,
-            assistant_text: String::new(),
+            blocks: vec![Block::UserText { text: user_text }],
             kind: TurnKind::InProgress,
             model,
             timestamp: SystemTime::now(),
@@ -237,10 +229,11 @@ impl AppState {
         if !matches!(turn.kind, TurnKind::InProgress) {
             return;
         }
-        turn.assistant_text.push_str(chunk);
         match turn.blocks.last_mut() {
             Some(Block::AssistantText { text }) => text.push_str(chunk),
-            _ => turn.blocks.push(Block::AssistantText { text: chunk.to_string() }),
+            _ => turn.blocks.push(Block::AssistantText {
+                text: chunk.to_string(),
+            }),
         }
     }
 

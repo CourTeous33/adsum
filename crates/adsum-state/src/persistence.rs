@@ -6,7 +6,7 @@
 //! v1 files (no `schema_version`) to v2 in-memory; future versions
 //! beyond `KNOWN_SCHEMA_VERSION` are rejected on read.
 
-use crate::Session;
+use crate::{Block, ModelId, Session, Turn, TurnKind, KNOWN_SCHEMA_VERSION};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::PathBuf;
@@ -66,30 +66,50 @@ pub(crate) fn parse_session_json(json: &str) -> Result<Session, String> {
 
     let version = version_u64 as u32; // safe: we just bounded it ≤ KNOWN_SCHEMA_VERSION (= 2)
 
-    if version == crate::KNOWN_SCHEMA_VERSION {
+    if version == KNOWN_SCHEMA_VERSION {
         return serde_json::from_value(value).map_err(|e| e.to_string());
     }
 
-    // v1 → v2 migration. Decode as the v1 shape (legacy fields only) then
-    // synthesize Block sequences from user_text/assistant_text.
-    let mut session: Session =
-        serde_json::from_value(value).map_err(|e| e.to_string())?;
-    session.schema_version = crate::KNOWN_SCHEMA_VERSION;
-    for turn in session.turns.iter_mut() {
-        // v1 files never contain a "blocks" field, so synthesize blocks from
-        // the legacy user_text / assistant_text fields unconditionally.
-        if !turn.user_text.is_empty() {
-            turn.blocks.push(crate::Block::UserText {
-                text: turn.user_text.clone(),
+    // v1 → v2 migration. Decode each turn's user_text / assistant_text
+    // from the raw JSON, synthesize Block sequences directly. This bypasses
+    // serde's `Turn` deserialization (which no longer knows the legacy fields).
+    let raw: serde_json::Value = value;
+    let id = raw["id"].as_str().ok_or("missing id")?.to_string();
+    let created_at: SystemTime = serde_json::from_value(raw["created_at"].clone())
+        .map_err(|e| format!("created_at: {e}"))?;
+    let turns_raw = raw["turns"].as_array().ok_or("missing turns array")?;
+    let mut turns = Vec::with_capacity(turns_raw.len());
+    for t in turns_raw {
+        let user_text = t["user_text"].as_str().unwrap_or("").to_string();
+        let assistant_text = t["assistant_text"].as_str().unwrap_or("").to_string();
+        let kind: TurnKind = serde_json::from_value(t["kind"].clone())
+            .map_err(|e| format!("kind: {e}"))?;
+        let model: ModelId = serde_json::from_value(t["model"].clone())
+            .map_err(|e| format!("model: {e}"))?;
+        let timestamp: SystemTime = serde_json::from_value(t["timestamp"].clone())
+            .map_err(|e| format!("timestamp: {e}"))?;
+        let mut blocks = Vec::new();
+        if !user_text.is_empty() {
+            blocks.push(Block::UserText { text: user_text });
+        }
+        if !assistant_text.is_empty() {
+            blocks.push(Block::AssistantText {
+                text: assistant_text,
             });
         }
-        if !turn.assistant_text.is_empty() {
-            turn.blocks.push(crate::Block::AssistantText {
-                text: turn.assistant_text.clone(),
-            });
-        }
+        turns.push(Turn {
+            blocks,
+            kind,
+            model,
+            timestamp,
+        });
     }
-    Ok(session)
+    Ok(Session {
+        schema_version: KNOWN_SCHEMA_VERSION,
+        id,
+        created_at,
+        turns,
+    })
 }
 
 pub fn load_session(id: &str) -> io::Result<Session> {
@@ -121,7 +141,7 @@ pub fn load_all_sessions_from(dir: &std::path::Path) -> io::Result<Vec<SessionSu
                     first_user_text: session
                         .turns
                         .first()
-                        .map(|t| t.user_text.clone())
+                        .and_then(|t| t.user_text_block().map(str::to_string))
                         .unwrap_or_default(),
                 });
             }

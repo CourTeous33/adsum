@@ -43,8 +43,8 @@ fn begin_turn_appends_in_progress_turn() {
     assert_eq!(idx, 0);
     let session = s.current_session().unwrap();
     let turn = &session.turns[0];
-    assert_eq!(turn.user_text, "hello");
-    assert_eq!(turn.assistant_text, "");
+    assert_eq!(turn.user_text_block(), Some("hello"));
+    assert_eq!(turn.final_assistant_text(), "");
     assert!(matches!(turn.kind, TurnKind::InProgress));
     assert!(s.is_streaming());
 }
@@ -57,7 +57,7 @@ fn append_chunk_concatenates_to_in_progress_turn() {
     s.append_chunk("Hel");
     s.append_chunk("lo!");
     let turn = &s.current_session().unwrap().turns[0];
-    assert_eq!(turn.assistant_text, "Hello!");
+    assert_eq!(turn.final_assistant_text(), "Hello!");
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn append_chunk_after_finalize_is_noop() {
     s.finalize_turn(TurnKind::Ok);
     s.append_chunk(" extra");
     let turn = &s.current_session().unwrap().turns[0];
-    assert_eq!(turn.assistant_text, "hello");
+    assert_eq!(turn.final_assistant_text(), "hello");
 }
 
 #[test]
@@ -235,8 +235,6 @@ fn turn_final_assistant_text_returns_last_assistant_block() {
             },
             adsum_state::Block::AssistantText { text: "second".into() },
         ],
-        user_text: String::new(),
-        assistant_text: String::new(),
         kind: adsum_state::TurnKind::Ok,
         model: adsum_settings::Settings::default().default_model,
         timestamp: std::time::SystemTime::now(),
@@ -250,8 +248,6 @@ fn turn_final_assistant_text_returns_last_assistant_block() {
 fn turn_user_text_block_returns_first_user_block_text() {
     let turn = adsum_state::Turn {
         blocks: vec![adsum_state::Block::UserText { text: "hello".into() }],
-        user_text: String::new(),
-        assistant_text: String::new(),
         kind: adsum_state::TurnKind::Ok,
         model: adsum_settings::Settings::default().default_model,
         timestamp: std::time::SystemTime::now(),
@@ -263,8 +259,6 @@ fn turn_user_text_block_returns_first_user_block_text() {
 fn turn_helpers_handle_empty_blocks() {
     let turn = adsum_state::Turn {
         blocks: vec![],
-        user_text: String::new(),
-        assistant_text: String::new(),
         kind: adsum_state::TurnKind::Ok,
         model: adsum_settings::Settings::default().default_model,
         timestamp: std::time::SystemTime::now(),

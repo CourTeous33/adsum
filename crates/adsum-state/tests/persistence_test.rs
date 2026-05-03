@@ -20,8 +20,6 @@ fn fixed_session(id: &str, turn_count: usize, t: u64) -> Session {
                 adsum_state::Block::UserText { text: format!("query {i}") },
                 adsum_state::Block::AssistantText { text: format!("echo: query {i}") },
             ],
-            user_text: format!("query {i}"),
-            assistant_text: format!("echo: query {i}"),
             kind: TurnKind::Ok,
             model: test_model(),
             timestamp: created + Duration::from_secs(i as u64),
@@ -127,9 +125,9 @@ fn loads_v1_session_and_migrates_blocks_in_memory() {
         &turn.blocks[1],
         adsum_state::Block::AssistantText { text } if text == "hi back"
     ));
-    // Legacy-field accessors still work (read off the populated fields).
-    assert_eq!(turn.user_text, "hello");
-    assert_eq!(turn.assistant_text, "hi back");
+    // Helpers expose the same data as the dropped legacy fields.
+    assert_eq!(turn.user_text_block(), Some("hello"));
+    assert_eq!(turn.final_assistant_text(), "hi back");
 }
 
 #[test]

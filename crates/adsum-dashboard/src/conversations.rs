@@ -207,6 +207,9 @@ impl ConversationsView {
                     .overflow_y_scroll();
 
                 for turn in &session.turns {
+                    let user_text = turn.user_text_block().unwrap_or("").to_string();
+                    let assistant_text = turn.final_assistant_text();
+
                     // User: right-aligned bubble (Claude.ai style). max_w on
                     // the bubble forces long text to wrap inside it rather
                     // than stretching full width.
@@ -218,19 +221,19 @@ impl ConversationsView {
                             .rounded(px(12.0))
                             .bg(adsum_tokens::bg_hover())
                             .text_color(adsum_tokens::text_primary())
-                            .child(turn.user_text.clone()),
+                            .child(user_text),
                     );
 
                     let (text_color, body_text) = match &turn.kind {
                         TurnKind::Ok | TurnKind::InProgress => {
-                            (adsum_tokens::text_primary(), turn.assistant_text.clone())
+                            (adsum_tokens::text_primary(), assistant_text.clone())
                         }
-                        TurnKind::Cancelled if turn.assistant_text.is_empty() => {
+                        TurnKind::Cancelled if assistant_text.is_empty() => {
                             (adsum_tokens::text_dim(), "(cancelled)".into())
                         }
                         TurnKind::Cancelled => (
                             adsum_tokens::text_primary(),
-                            format!("{}…", turn.assistant_text),
+                            format!("{}…", assistant_text),
                         ),
                         TurnKind::Error { message, .. } => {
                             (adsum_tokens::error_red(), format!("Error: {message}"))
