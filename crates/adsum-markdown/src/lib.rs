@@ -23,6 +23,7 @@ use std::sync::Arc;
 pub struct Renderer {
     pub(crate) link_handler: Arc<dyn Fn(&str) + Send + Sync + 'static>,
     pub(crate) streaming_cursor: bool,
+    pub(crate) streaming_cursor_visible: bool,
 }
 
 impl Renderer {
@@ -33,6 +34,7 @@ impl Renderer {
                 let _ = std::process::Command::new("open").arg(url).status();
             }),
             streaming_cursor: false,
+            streaming_cursor_visible: true,
         }
     }
 
@@ -45,9 +47,21 @@ impl Renderer {
         self
     }
 
-    /// Append a 1-character `▌` cursor element after the rendered markdown.
+    /// Reserve a `▌` cursor slot at the end of the rendered markdown. Use
+    /// [`Self::with_streaming_cursor_visible`] to control its visible phase
+    /// (caller-driven blink).
     pub fn with_streaming_cursor(mut self, on: bool) -> Self {
         self.streaming_cursor = on;
+        self
+    }
+
+    /// Toggle the cursor's visible phase. The slot stays present while
+    /// `streaming_cursor` is true; visibility just swaps the color between
+    /// `accent` and `bg_primary` so the column height doesn't jump as the
+    /// caller blinks. Defaults to `true` so consumers that haven't wired
+    /// blink see the cursor behave as before.
+    pub fn with_streaming_cursor_visible(mut self, visible: bool) -> Self {
+        self.streaming_cursor_visible = visible;
         self
     }
 

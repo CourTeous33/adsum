@@ -3,6 +3,7 @@
 //! first Enter.
 
 use adsum_state::{AppState, Block, TurnKind};
+use adsum_ui::caret::{spawn_blink, Caret};
 use gpui::{div, prelude::*, px, Context, Render, SharedString, Window};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -18,13 +19,25 @@ pub struct Conversation {
     /// Per-`ToolUse.id` disclosure state. Click toggles. Lifetime is the
     /// conversation popup window — wiped on dismiss.
     expanded: HashMap<String, bool>,
+    stream_caret: Caret,
 }
 
 impl Conversation {
-    pub fn new(state: Arc<Mutex<AppState>>, _window: &mut Window, _cx: &mut Context<Self>) -> Self {
+    pub fn new(state: Arc<Mutex<AppState>>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mut stream_caret = Caret::new();
+        // Blink for the entity's lifetime — the renderer only paints the
+        // cursor while a turn is InProgress, so the toggle is a no-op when
+        // idle. Predicate returns true forever; loop ends on entity drop.
+        let task = spawn_blink(
+            cx,
+            |this: &mut Self| &mut this.stream_caret,
+            |_| true,
+        );
+        stream_caret.set_task(task);
         Self {
             state,
             expanded: HashMap::new(),
+            stream_caret,
         }
     }
 }
@@ -96,9 +109,11 @@ impl Render for Conversation {
                     }
                     Block::AssistantText { text } => {
                         // Assistant: full-width markdown with streaming-cursor
-                        // flag.
+                        // flag. Cursor visibility tracks the view's blink
+                        // caret so it pulses while the turn is in flight.
                         let renderer = adsum_markdown::Renderer::new()
-                            .with_streaming_cursor(matches!(turn.kind, TurnKind::InProgress));
+                            .with_streaming_cursor(matches!(turn.kind, TurnKind::InProgress))
+                            .with_streaming_cursor_visible(self.stream_caret.visible);
                         let assistant_row = div()
                             .w_full()
                             .text_color(adsum_tokens::text_primary())

@@ -34,7 +34,12 @@ pub(crate) fn render_blocks(renderer: &Renderer, blocks: &[Block]) -> AnyElement
     }
 
     if renderer.streaming_cursor {
-        col = col.child(div().text_color(adsum_tokens::accent()).child("▌"));
+        let color = if renderer.streaming_cursor_visible {
+            adsum_tokens::accent()
+        } else {
+            adsum_tokens::bg_primary()
+        };
+        col = col.child(div().text_color(color).child("▌"));
     }
 
     col.into_any_element()
