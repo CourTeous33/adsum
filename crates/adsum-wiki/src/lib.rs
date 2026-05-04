@@ -100,6 +100,11 @@ impl WikiStore {
         Ok(std::fs::read_to_string(self.root.join("log.md"))?)
     }
 
+    pub fn write_log(&self, content: &str) -> Result<(), WikiError> {
+        std::fs::write(self.root.join("log.md"), content)?;
+        Ok(())
+    }
+
     /// Append `entry` plus a trailing newline to `log.md`. Caller is
     /// responsible for the entry text (no schema enforcement here).
     pub fn append_log(&self, entry: &str) -> Result<(), WikiError> {

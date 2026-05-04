@@ -358,3 +358,19 @@ fn rename_page_rejects_invalid_slugs_in_either_position() {
         Err(adsum_wiki::WikiError::InvalidSlug(_))
     ));
 }
+
+#[test]
+fn write_log_overwrites_existing_content() {
+    let dir = tempdir().expect("tempdir");
+    let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
+
+    store
+        .append_log("first line\n")
+        .expect("append");
+    store
+        .write_log("# Replaced\n\nbody\n")
+        .expect("write");
+
+    let after = store.read_log().expect("read");
+    assert_eq!(after, "# Replaced\n\nbody\n");
+}
