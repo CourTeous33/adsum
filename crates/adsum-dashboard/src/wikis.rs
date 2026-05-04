@@ -7,7 +7,8 @@
 use adsum_ui::caret::{spawn_blink, Caret};
 use adsum_wiki::{PageMeta, WikiError, WikiStore};
 use gpui::{
-    div, prelude::*, px, svg, AnyElement, Context, FocusHandle, KeyDownEvent, MouseButton, Window,
+    div, prelude::*, px, svg, AnyElement, Context, FocusHandle, KeyDownEvent, MouseButton, Task,
+    Window,
 };
 use std::sync::{Arc, Mutex};
 
@@ -52,6 +53,12 @@ pub struct WikisView {
     create_caret: Caret,
     rename_focus: FocusHandle,
     rename_caret: Caret,
+    editing: bool,
+    edit_buffer: String,
+    edit_focus: FocusHandle,
+    edit_caret: Caret,
+    save_task: Option<Task<()>>,
+    save_error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +79,12 @@ impl WikisView {
             create_caret: Caret::new(),
             rename_focus: cx.focus_handle(),
             rename_caret: Caret::new(),
+            editing: false,
+            edit_buffer: String::new(),
+            edit_focus: cx.focus_handle(),
+            edit_caret: Caret::new(),
+            save_task: None,
+            save_error: None,
         }
     }
 
@@ -86,11 +99,25 @@ impl WikisView {
         self.header_mode = HeaderMode::Idle;
         self.create_caret.stop();
         self.rename_caret.stop();
+        self.editing = false;
+        self.edit_buffer.clear();
+        self.edit_caret.stop();
+        self.save_task = None;
+        self.save_error = None;
     }
 
     fn select(&mut self, sel: Selection, cx: &mut Context<crate::Dashboard>) {
         if self.selection == sel {
             return;
+        }
+        if self.editing {
+            // Flush pending save, then exit edit mode before switching.
+            self.flush_save();
+            self.editing = false;
+            self.edit_buffer.clear();
+            self.edit_caret.stop();
+            self.save_task = None;
+            self.save_error = None;
         }
         self.selection = sel.clone();
         self.content = read_for(&self.wiki, &sel);
@@ -328,6 +355,144 @@ impl WikisView {
                         draft.push(ch);
                         cx.notify();
                     }
+                }
+            }
+        }
+    }
+
+    fn start_edit(&mut self, window: &mut Window, cx: &mut Context<crate::Dashboard>) {
+        // Populate buffer from current content. If content read failed,
+        // start with empty buffer — the user can type fresh content.
+        self.edit_buffer = self.content.as_ref().cloned().unwrap_or_default();
+        self.editing = true;
+        self.save_error = None;
+        self.edit_caret.visible = true;
+        window.focus(&self.edit_focus, cx);
+        let task = spawn_blink(
+            cx,
+            |d: &mut crate::Dashboard| &mut d.wikis.edit_caret,
+            |d| d.wikis.editing,
+        );
+        self.edit_caret.set_task(task);
+        cx.notify();
+    }
+
+    fn exit_edit(&mut self, cx: &mut Context<crate::Dashboard>) {
+        if !self.editing {
+            return;
+        }
+        // Flush any pending save synchronously.
+        self.flush_save();
+        self.editing = false;
+        self.edit_buffer.clear();
+        self.edit_caret.stop();
+        self.save_task = None;
+        // Re-read content for rendered view (in case save updated it).
+        self.content = read_for(&self.wiki, &self.selection);
+        cx.notify();
+    }
+
+    /// Synchronously write `edit_buffer` to disk for the current selection.
+    /// Sets `save_error` on failure. Caller decides whether to clear save_task.
+    fn flush_save(&mut self) {
+        if !self.editing {
+            return;
+        }
+        let result = match &self.selection {
+            Selection::Index => self.wiki.lock().unwrap().write_index(&self.edit_buffer),
+            Selection::Log => self.wiki.lock().unwrap().write_log(&self.edit_buffer),
+            Selection::Page(slug) => self
+                .wiki
+                .lock()
+                .unwrap()
+                .write_page(slug, &self.edit_buffer),
+        };
+        self.save_error = match result {
+            Ok(()) => None,
+            Err(err) => Some(format!("Save failed: {err}")),
+        };
+    }
+
+    /// Reschedule a debounced save 500ms from now. Replacing `save_task` with
+    /// a fresh task drops (cancels) the previous one.
+    fn schedule_save(&mut self, cx: &mut Context<crate::Dashboard>) {
+        let task = cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(500))
+                .await;
+            let _ = this.update(cx, |dashboard, cx| {
+                if dashboard.wikis.editing {
+                    dashboard.wikis.flush_save();
+                    cx.notify();
+                }
+            });
+        });
+        self.save_task = Some(task);
+    }
+
+    fn handle_edit_key(
+        &mut self,
+        event: &KeyDownEvent,
+        cx: &mut Context<crate::Dashboard>,
+    ) {
+        if !self.editing {
+            return;
+        }
+        let key = event.keystroke.key.clone();
+        let modifiers = event.keystroke.modifiers;
+
+        if key == "escape" {
+            self.exit_edit(cx);
+            return;
+        }
+        // cmd+v paste — append clipboard text to buffer.
+        if key == "v" && modifiers.platform {
+            if let Some(item) = cx.read_from_clipboard() {
+                if let Some(text) = item.text() {
+                    self.edit_buffer.push_str(&text);
+                    self.schedule_save(cx);
+                    cx.notify();
+                }
+            }
+            return;
+        }
+        if modifiers.platform || modifiers.control || modifiers.alt {
+            return;
+        }
+        if key == "enter" {
+            self.edit_buffer.push('\n');
+            self.schedule_save(cx);
+            cx.notify();
+            return;
+        }
+        if key == "backspace" {
+            self.edit_buffer.pop();
+            self.schedule_save(cx);
+            cx.notify();
+            return;
+        }
+        if key == "space" {
+            self.edit_buffer.push(' ');
+            self.schedule_save(cx);
+            cx.notify();
+            return;
+        }
+        if key == "tab" {
+            // Insert a literal tab char so users can type indented code blocks.
+            self.edit_buffer.push('\t');
+            self.schedule_save(cx);
+            cx.notify();
+            return;
+        }
+        if matches!(key.as_str(), "up" | "down" | "left" | "right") {
+            return;
+        }
+        if key.chars().count() == 1 {
+            if let Some(ch) = key.chars().next() {
+                if !ch.is_control() {
+                    self.edit_buffer.push(ch);
+                    self.schedule_save(cx);
+                    cx.notify();
                 }
             }
         }
@@ -715,12 +880,17 @@ impl WikisView {
         self.header_mode = HeaderMode::Idle;
         self.create_caret.stop();
         self.rename_caret.stop();
+        self.editing = false;
+        self.edit_buffer.clear();
+        self.edit_caret.stop();
+        self.save_task = None;
+        self.save_error = None;
         cx.notify();
     }
 
     pub fn render(&self, cx: &mut Context<crate::Dashboard>) -> AnyElement {
         let sidebar = self.render_sidebar(cx);
-        let detail = self.render_detail();
+        let detail = self.render_detail(cx);
         div()
             .flex()
             .flex_row()
@@ -838,13 +1008,18 @@ impl WikisView {
             .into_any_element()
     }
 
-    fn render_detail(&self) -> AnyElement {
-        let body: AnyElement = match &self.content {
-            Ok(text) => adsum_markdown::Renderer::new().render(text),
-            Err(err) => div()
-                .text_color(adsum_tokens::error_red())
-                .child(err.0.clone())
-                .into_any_element(),
+    fn render_detail(&self, cx: &mut Context<crate::Dashboard>) -> AnyElement {
+        let header = self.render_detail_header(cx);
+        let body: AnyElement = if self.editing {
+            self.render_edit_view(cx)
+        } else {
+            match &self.content {
+                Ok(text) => adsum_markdown::Renderer::new().render(text),
+                Err(err) => div()
+                    .text_color(adsum_tokens::error_red())
+                    .child(err.0.clone())
+                    .into_any_element(),
+            }
         };
 
         div()
@@ -854,11 +1029,132 @@ impl WikisView {
             .min_h_0()
             .flex()
             .flex_col()
-            .px_8()
-            .py_5()
-            .overflow_y_scroll()
-            .child(body)
+            .child(header)
+            .child(
+                div()
+                    .id("wikis-detail-body")
+                    .flex_1()
+                    .min_h_0()
+                    .px_8()
+                    .py_5()
+                    .overflow_y_scroll()
+                    .child(body),
+            )
             .into_any_element()
+    }
+
+    fn render_detail_header(&self, cx: &mut Context<crate::Dashboard>) -> AnyElement {
+        let editing = self.editing;
+        let icon_bg = if editing {
+            adsum_tokens::accent_dim()
+        } else {
+            adsum_tokens::bg_primary()
+        };
+        let icon_color = if editing {
+            adsum_tokens::accent()
+        } else {
+            adsum_tokens::text_dim()
+        };
+        div()
+            .flex()
+            .flex_row()
+            .justify_end()
+            .items_center()
+            .px_3()
+            .py_2()
+            .border_b_1()
+            .border_color(adsum_tokens::border())
+            .child(
+                div()
+                    .id("wikis-detail-edit-toggle")
+                    .w(px(28.0))
+                    .h(px(28.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.0))
+                    .bg(icon_bg)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(adsum_tokens::bg_hover()))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _event, window, cx| {
+                            cx.stop_propagation();
+                            if editing {
+                                this.wikis.exit_edit(cx);
+                            } else {
+                                this.wikis.start_edit(window, cx);
+                            }
+                        }),
+                    )
+                    .child(
+                        svg()
+                            .path("pencil.svg")
+                            .size(px(16.0))
+                            .text_color(icon_color),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn render_edit_view(&self, cx: &mut Context<crate::Dashboard>) -> AnyElement {
+        let focus_handle = self.edit_focus.clone();
+        let lines: Vec<&str> = self.edit_buffer.split('\n').collect();
+        let last_idx = lines.len().saturating_sub(1);
+
+        let mut col = div()
+            .id("wikis-edit-view")
+            .track_focus(&focus_handle)
+            .flex()
+            .flex_col()
+            .w_full()
+            .min_w_0()
+            .font_family("Menlo")
+            .text_color(adsum_tokens::text_primary())
+            .text_size(px(adsum_tokens::TEXT_BODY))
+            .on_key_down(cx.listener(
+                |this, event: &KeyDownEvent, _window, cx| {
+                    this.wikis.handle_edit_key(event, cx);
+                },
+            ));
+
+        for (idx, line) in lines.iter().enumerate() {
+            let line_str = line.to_string();
+            let line_div = div().w_full().min_w_0();
+            if idx == last_idx {
+                // Last line: text + trailing caret in a flex_row so caret
+                // sits flush with the last char (no parent gap).
+                let row = div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .child(
+                        div().min_w_0().child(if line_str.is_empty() {
+                            " ".to_string() // placeholder so empty line still has height
+                        } else {
+                            line_str
+                        }),
+                    )
+                    .child(self.edit_caret.render());
+                col = col.child(row);
+            } else if line_str.is_empty() {
+                col = col.child(line_div.child(" "));
+            } else {
+                col = col.child(line_div.child(line_str));
+            }
+        }
+
+        if let Some(err) = &self.save_error {
+            col = col.child(
+                div()
+                    .mt_3()
+                    .text_color(adsum_tokens::error_red())
+                    .text_size(px(adsum_tokens::TEXT_META))
+                    .child(err.clone()),
+            );
+        }
+
+        col.into_any_element()
     }
 }
 
