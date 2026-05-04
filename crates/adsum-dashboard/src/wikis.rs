@@ -21,7 +21,6 @@ pub enum Selection {
 #[derive(Debug, Clone)]
 enum RowMode {
     Idle,
-    #[allow(dead_code)]
     Renaming {
         slug: String,
         draft: String,
@@ -48,6 +47,8 @@ pub struct WikisView {
     header_mode: HeaderMode,
     create_focus: FocusHandle,
     create_caret: Caret,
+    rename_focus: FocusHandle,
+    rename_caret: Caret,
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +67,8 @@ impl WikisView {
             header_mode: HeaderMode::Idle,
             create_focus: cx.focus_handle(),
             create_caret: Caret::new(),
+            rename_focus: cx.focus_handle(),
+            rename_caret: Caret::new(),
         }
     }
 
@@ -79,6 +82,7 @@ impl WikisView {
         self.row_mode = RowMode::Idle;
         self.header_mode = HeaderMode::Idle;
         self.create_caret.stop();
+        self.rename_caret.stop();
     }
 
     fn select(&mut self, sel: Selection, cx: &mut Context<crate::Dashboard>) {
@@ -144,6 +148,7 @@ impl WikisView {
 
     fn cancel_row_mode(&mut self, cx: &mut Context<crate::Dashboard>) {
         self.row_mode = RowMode::Idle;
+        self.rename_caret.stop();
         cx.notify();
     }
 
@@ -176,6 +181,114 @@ impl WikisView {
                 if let RowMode::ConfirmingDelete { error, .. } = &mut self.row_mode {
                     *error = Some(format_delete_error(&err));
                     cx.notify();
+                }
+            }
+        }
+    }
+
+    fn start_rename(
+        &mut self,
+        slug: String,
+        window: &mut Window,
+        cx: &mut Context<crate::Dashboard>,
+    ) {
+        self.row_mode = RowMode::Renaming {
+            slug: slug.clone(),
+            draft: slug,
+            error: None,
+        };
+        self.rename_caret.visible = true;
+        window.focus(&self.rename_focus, cx);
+        let task = spawn_blink(
+            cx,
+            |d: &mut crate::Dashboard| &mut d.wikis.rename_caret,
+            |d| matches!(d.wikis.row_mode, RowMode::Renaming { .. }),
+        );
+        self.rename_caret.set_task(task);
+        cx.notify();
+    }
+
+    fn submit_rename(&mut self, cx: &mut Context<crate::Dashboard>) {
+        let (old, new) = match &self.row_mode {
+            RowMode::Renaming { slug, draft, .. } => (slug.clone(), draft.clone()),
+            _ => return,
+        };
+        if new.is_empty() {
+            // Empty input — treat as cancel.
+            self.cancel_row_mode(cx);
+            return;
+        }
+        if old == new {
+            self.cancel_row_mode(cx);
+            return;
+        }
+        let result = self.wiki.lock().unwrap().rename_page(&old, &new);
+        match result {
+            Ok(()) => {
+                let next = if matches!(&self.selection, Selection::Page(s) if s == &old) {
+                    Selection::Page(new)
+                } else {
+                    self.selection.clone()
+                };
+                self.refresh_after_mutation(next, cx);
+            }
+            Err(WikiError::PageNotFound(_)) => {
+                // Race: page deleted before rename. Refresh silently.
+                let next = if matches!(&self.selection, Selection::Page(s) if s == &old) {
+                    Selection::Index
+                } else {
+                    self.selection.clone()
+                };
+                self.refresh_after_mutation(next, cx);
+            }
+            Err(err) => {
+                if let RowMode::Renaming { error, .. } = &mut self.row_mode {
+                    *error = Some(format_rename_error(&err));
+                    cx.notify();
+                }
+            }
+        }
+    }
+
+    fn handle_rename_key(
+        &mut self,
+        event: &KeyDownEvent,
+        cx: &mut Context<crate::Dashboard>,
+    ) {
+        let key = match &self.row_mode {
+            RowMode::Renaming { .. } => event.keystroke.key.clone(),
+            _ => return,
+        };
+        let modifiers = event.keystroke.modifiers;
+
+        if key == "enter" {
+            self.submit_rename(cx);
+            return;
+        }
+        if key == "escape" {
+            self.cancel_row_mode(cx);
+            return;
+        }
+        if modifiers.platform || modifiers.control || modifiers.alt {
+            return;
+        }
+        if key == "backspace" {
+            if let RowMode::Renaming { draft, .. } = &mut self.row_mode {
+                draft.pop();
+                cx.notify();
+            }
+            return;
+        }
+        if matches!(key.as_str(), "up" | "down" | "left" | "right" | "tab") {
+            return;
+        }
+        if key.chars().count() == 1 {
+            if let Some(ch) = key.chars().next() {
+                if !ch.is_control() {
+                    if let RowMode::Renaming { draft, .. } = &mut self.row_mode {
+                        draft.push(ch);
+                        cx.notify();
+                    }
                 }
             }
         }
@@ -242,6 +355,7 @@ impl WikisView {
             adsum_tokens::text_primary()
         };
         let focus_handle = self.create_focus.clone();
+        let draft_is_empty = draft.is_empty();
         let mut row = div()
             .flex()
             .flex_col()
@@ -262,8 +376,26 @@ impl WikisView {
                             this.wikis.handle_create_key(event, cx);
                         },
                     ))
-                    .child(self.create_caret.render())
-                    .child(div().ml_1().text_color(display_color).child(display)),
+                    // Empty draft → caret first (line start), then placeholder.
+                    // Has draft → text first, then caret (cursor at the end).
+                    .children(if draft_is_empty {
+                        vec![
+                            self.create_caret.render(),
+                            div()
+                                .ml_1()
+                                .text_color(display_color)
+                                .child(display)
+                                .into_any_element(),
+                        ]
+                    } else {
+                        vec![
+                            div()
+                                .text_color(display_color)
+                                .child(display)
+                                .into_any_element(),
+                            self.create_caret.render(),
+                        ]
+                    }),
             );
         if let Some(msg) = error {
             row = row.child(
@@ -286,6 +418,13 @@ impl WikisView {
         is_selected: bool,
     ) -> AnyElement {
         // Mode-specific row rendering takes precedence over the normal label.
+        if let RowMode::Renaming { slug: rename_slug, draft, error } = &self.row_mode {
+            if rename_slug == slug {
+                let draft = draft.clone();
+                let error = error.clone();
+                return self.render_rename_row(cx, idx, &draft, error.as_deref());
+            }
+        }
         if let RowMode::ConfirmingDelete { slug: confirm_slug, error } = &self.row_mode {
             if confirm_slug == slug {
                 return self.render_delete_confirm_row(cx, idx, slug, error.as_deref());
@@ -339,6 +478,7 @@ impl WikisView {
         slug: &str,
     ) -> AnyElement {
         let trash_slug = slug.to_string();
+        let pencil_slug = slug.to_string();
         div()
             .flex()
             .flex_row()
@@ -349,7 +489,6 @@ impl WikisView {
             // in text_dim color stay quiet enough; selected-row hover bg makes
             // them readable. Revisit if it reads noisy.
             .child(
-                // Pencil: handler wired in Task 9.
                 div()
                     .id(("wikis-row-pencil", idx))
                     .w(px(24.0))
@@ -360,6 +499,13 @@ impl WikisView {
                     .rounded(px(4.0))
                     .cursor_pointer()
                     .hover(|s| s.bg(adsum_tokens::bg_hover()))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _event, window, cx| {
+                            cx.stop_propagation();
+                            this.wikis.start_rename(pencil_slug.clone(), window, cx);
+                        }),
+                    )
                     .child(
                         svg()
                             .path("pencil.svg")
@@ -393,6 +539,80 @@ impl WikisView {
                     ),
             )
             .into_any_element()
+    }
+
+    fn render_rename_row(
+        &self,
+        cx: &mut Context<crate::Dashboard>,
+        idx: usize,
+        draft: &str,
+        error: Option<&str>,
+    ) -> AnyElement {
+        let display: String = if draft.is_empty() {
+            "(empty)".into()
+        } else {
+            draft.to_string()
+        };
+        let display_color = if draft.is_empty() {
+            adsum_tokens::text_dim()
+        } else {
+            adsum_tokens::text_primary()
+        };
+        let focus_handle = self.rename_focus.clone();
+        let draft_is_empty = draft.is_empty();
+        let mut row = div()
+            .flex()
+            .flex_col()
+            .border_b_1()
+            .border_color(adsum_tokens::border())
+            .bg(adsum_tokens::bg_hover())
+            .child(
+                div()
+                    .id(("wikis-rename-input", idx))
+                    .track_focus(&focus_handle)
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .px_4()
+                    .py_3()
+                    .text_size(px(adsum_tokens::TEXT_BODY))
+                    .on_key_down(cx.listener(
+                        |this, event: &KeyDownEvent, _window, cx| {
+                            this.wikis.handle_rename_key(event, cx);
+                        },
+                    ))
+                    // Empty draft → caret first (line start), then placeholder.
+                    // Has draft → text first, then caret (cursor at the end).
+                    .children(if draft_is_empty {
+                        vec![
+                            self.rename_caret.render(),
+                            div()
+                                .ml_1()
+                                .text_color(display_color)
+                                .child(display)
+                                .into_any_element(),
+                        ]
+                    } else {
+                        vec![
+                            div()
+                                .text_color(display_color)
+                                .child(display)
+                                .into_any_element(),
+                            self.rename_caret.render(),
+                        ]
+                    }),
+            );
+        if let Some(msg) = error {
+            row = row.child(
+                div()
+                    .px_4()
+                    .pb_2()
+                    .text_size(px(adsum_tokens::TEXT_META))
+                    .text_color(adsum_tokens::error_red())
+                    .child(msg.to_string()),
+            );
+        }
+        row.into_any_element()
     }
 
     fn render_delete_confirm_row(
@@ -494,6 +714,7 @@ impl WikisView {
         self.row_mode = RowMode::Idle;
         self.header_mode = HeaderMode::Idle;
         self.create_caret.stop();
+        self.rename_caret.stop();
         cx.notify();
     }
 
@@ -669,6 +890,17 @@ fn format_create_error(err: &WikiError) -> String {
             // create_page never returns PageNotFound; defensive default.
             "Could not create page.".into()
         }
+    }
+}
+
+fn format_rename_error(err: &WikiError) -> String {
+    match err {
+        WikiError::InvalidSlug(_) => {
+            "Lowercase letters, digits, and '-' only; can't start with '-'.".into()
+        }
+        WikiError::PageAlreadyExists(slug) => format!("A page named '{slug}' already exists."),
+        WikiError::Io(io_err) => format!("Could not rename page: {io_err}"),
+        WikiError::PageNotFound(_) => "Could not rename page (source missing).".into(),
     }
 }
 

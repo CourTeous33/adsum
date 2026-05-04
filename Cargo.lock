@@ -66,6 +66,7 @@ dependencies = [
  "adsum-markdown",
  "adsum-state",
  "adsum-tokens",
+ "adsum-ui",
  "gpui",
  "serde_json",
 ]

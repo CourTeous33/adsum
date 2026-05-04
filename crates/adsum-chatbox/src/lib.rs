@@ -362,8 +362,36 @@ impl Render for Chatbox {
             } else {
                 None
             })
-            .child(self.caret.render())
-            .child(div().text_color(display_text.1).child(display_text.0))
+            // Bundle text + caret in a no-gap inner row so the parent's
+            // gap_3 only separates the ▸/… cluster from the input cluster —
+            // the caret stays flush with the text.
+            // Empty text → caret first then placeholder (start of line).
+            // Has text → text first then caret (cursor at the end, moves
+            // right with each keypress).
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .children(if self.current_text.is_empty() {
+                        vec![
+                            self.caret.render(),
+                            div()
+                                .ml_1()
+                                .text_color(display_text.1)
+                                .child(display_text.0)
+                                .into_any_element(),
+                        ]
+                    } else {
+                        vec![
+                            div()
+                                .text_color(display_text.1)
+                                .child(display_text.0)
+                                .into_any_element(),
+                            self.caret.render(),
+                        ]
+                    }),
+            )
     }
 }
 
