@@ -98,23 +98,27 @@ fn render_list(
     items: &[Vec<Block>],
     ordered_start: Option<u64>,
 ) -> AnyElement {
-    let mut col = div().flex().flex_col().gap_1().w_full();
+    let mut col = div().flex().flex_col().gap_1().w_full().min_w_0();
     for (idx, item_blocks) in items.iter().enumerate() {
         let bullet = match ordered_start {
             Some(start) => format!("{}.", start + idx as u64),
             None => "•".to_string(),
         };
-        let mut item_col = div().flex().flex_col().w_full();
+        let mut item_col = div().flex().flex_col().w_full().min_w_0();
         for b in item_blocks {
-            item_col = item_col.child(render_block(renderer, b));
+            // Mirrors render_blocks: each nested block gets a width-bearing
+            // wrapper so long unbroken tokens wrap to the item's width
+            // instead of pushing the column wider.
+            item_col = item_col.child(div().w_full().min_w_0().child(render_block(renderer, b)));
         }
         let row = div()
             .flex()
             .flex_row()
             .gap_2()
             .w_full()
+            .min_w_0()
             .child(div().text_color(adsum_tokens::text_muted()).child(bullet))
-            .child(div().flex_1().child(item_col));
+            .child(div().flex_1().min_w_0().child(item_col));
         col = col.child(row);
     }
     col.into_any_element()
