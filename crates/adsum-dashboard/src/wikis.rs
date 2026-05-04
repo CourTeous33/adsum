@@ -19,9 +19,9 @@ pub enum Selection {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 enum RowMode {
     Idle,
+    #[allow(dead_code)]
     Renaming {
         slug: String,
         draft: String,
@@ -137,6 +137,50 @@ impl WikisView {
         }
     }
 
+    fn start_delete(&mut self, slug: String, cx: &mut Context<crate::Dashboard>) {
+        self.row_mode = RowMode::ConfirmingDelete { slug, error: None };
+        cx.notify();
+    }
+
+    fn cancel_row_mode(&mut self, cx: &mut Context<crate::Dashboard>) {
+        self.row_mode = RowMode::Idle;
+        cx.notify();
+    }
+
+    fn confirm_delete(&mut self, cx: &mut Context<crate::Dashboard>) {
+        let slug = match &self.row_mode {
+            RowMode::ConfirmingDelete { slug, .. } => slug.clone(),
+            _ => return,
+        };
+        let result = self.wiki.lock().unwrap().delete_page(&slug);
+        match result {
+            Ok(()) => {
+                let next = if matches!(&self.selection, Selection::Page(s) if s == &slug) {
+                    Selection::Index
+                } else {
+                    self.selection.clone()
+                };
+                self.refresh_after_mutation(next, cx);
+            }
+            Err(WikiError::PageNotFound(_)) => {
+                // Race: page disappeared between list and delete. Refresh
+                // silently and exit.
+                let next = if matches!(&self.selection, Selection::Page(s) if s == &slug) {
+                    Selection::Index
+                } else {
+                    self.selection.clone()
+                };
+                self.refresh_after_mutation(next, cx);
+            }
+            Err(err) => {
+                if let RowMode::ConfirmingDelete { error, .. } = &mut self.row_mode {
+                    *error = Some(format_delete_error(&err));
+                    cx.notify();
+                }
+            }
+        }
+    }
+
     fn handle_create_key(
         &mut self,
         event: &KeyDownEvent,
@@ -220,6 +264,207 @@ impl WikisView {
                     ))
                     .child(self.create_caret.render())
                     .child(div().ml_1().text_color(display_color).child(display)),
+            );
+        if let Some(msg) = error {
+            row = row.child(
+                div()
+                    .px_4()
+                    .pb_2()
+                    .text_size(px(adsum_tokens::TEXT_META))
+                    .text_color(adsum_tokens::error_red())
+                    .child(msg.to_string()),
+            );
+        }
+        row.into_any_element()
+    }
+
+    fn render_page_row(
+        &self,
+        cx: &mut Context<crate::Dashboard>,
+        idx: usize,
+        slug: &str,
+        is_selected: bool,
+    ) -> AnyElement {
+        // Mode-specific row rendering takes precedence over the normal label.
+        if let RowMode::ConfirmingDelete { slug: confirm_slug, error } = &self.row_mode {
+            if confirm_slug == slug {
+                return self.render_delete_confirm_row(cx, idx, slug, error.as_deref());
+            }
+        }
+
+        // Normal row.
+        let slug_owned = slug.to_string();
+        let target = Selection::Page(slug_owned.clone());
+        let stripe_color = if is_selected {
+            adsum_tokens::accent()
+        } else {
+            adsum_tokens::bg_primary()
+        };
+        let mut row = div()
+            .id(("wikis-page", idx))
+            .flex()
+            .flex_row()
+            .border_b_1()
+            .border_color(adsum_tokens::border())
+            .hover(|s| s.bg(adsum_tokens::bg_hover()))
+            .cursor_pointer()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _event, _window, cx| {
+                    this.wikis.select(target.clone(), cx);
+                }),
+            );
+        if is_selected {
+            row = row.bg(adsum_tokens::bg_hover());
+        }
+        row.child(div().w(px(3.0)).h_full().bg(stripe_color))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .px_4()
+                    .py_3()
+                    .text_size(px(adsum_tokens::TEXT_BODY))
+                    .text_color(adsum_tokens::text_primary())
+                    .child(slug_owned.clone()),
+            )
+            .child(self.render_row_icons(cx, idx, &slug_owned))
+            .into_any_element()
+    }
+
+    fn render_row_icons(
+        &self,
+        cx: &mut Context<crate::Dashboard>,
+        idx: usize,
+        slug: &str,
+    ) -> AnyElement {
+        let trash_slug = slug.to_string();
+        div()
+            .flex()
+            .flex_row()
+            .gap_1()
+            .pr_2()
+            .items_center()
+            // GPUI in this rev doesn't expose group-hover. Always-visible icons
+            // in text_dim color stay quiet enough; selected-row hover bg makes
+            // them readable. Revisit if it reads noisy.
+            .child(
+                // Pencil: handler wired in Task 9.
+                div()
+                    .id(("wikis-row-pencil", idx))
+                    .w(px(24.0))
+                    .h(px(24.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(adsum_tokens::bg_hover()))
+                    .child(
+                        svg()
+                            .path("pencil.svg")
+                            .size(px(14.0))
+                            .text_color(adsum_tokens::text_dim()),
+                    ),
+            )
+            .child(
+                div()
+                    .id(("wikis-row-trash", idx))
+                    .w(px(24.0))
+                    .h(px(24.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(adsum_tokens::bg_hover()))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _event, _window, cx| {
+                            cx.stop_propagation();
+                            this.wikis.start_delete(trash_slug.clone(), cx);
+                        }),
+                    )
+                    .child(
+                        svg()
+                            .path("trash-2.svg")
+                            .size(px(14.0))
+                            .text_color(adsum_tokens::text_dim()),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn render_delete_confirm_row(
+        &self,
+        cx: &mut Context<crate::Dashboard>,
+        idx: usize,
+        slug: &str,
+        error: Option<&str>,
+    ) -> AnyElement {
+        let label = format!("Delete '{slug}'?");
+        let mut row = div()
+            .id(("wikis-confirm-delete", idx))
+            .flex()
+            .flex_col()
+            .border_b_1()
+            .border_color(adsum_tokens::border())
+            .bg(adsum_tokens::bg_hover())
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .px_4()
+                    .py_3()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(adsum_tokens::TEXT_BODY))
+                            .text_color(adsum_tokens::text_primary())
+                            .child(label),
+                    )
+                    .child(
+                        div()
+                            .id(("wikis-confirm-yes", idx))
+                            .px_2()
+                            .py_1()
+                            .rounded(px(4.0))
+                            .bg(adsum_tokens::error_red())
+                            .text_color(adsum_tokens::text_primary())
+                            .text_size(px(adsum_tokens::TEXT_META))
+                            .cursor_pointer()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _event, _window, cx| {
+                                    cx.stop_propagation();
+                                    this.wikis.confirm_delete(cx);
+                                }),
+                            )
+                            .child("Confirm"),
+                    )
+                    .child(
+                        div()
+                            .id(("wikis-confirm-no", idx))
+                            .px_2()
+                            .py_1()
+                            .rounded(px(4.0))
+                            .border_1()
+                            .border_color(adsum_tokens::border())
+                            .text_color(adsum_tokens::text_primary())
+                            .text_size(px(adsum_tokens::TEXT_META))
+                            .cursor_pointer()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _event, _window, cx| {
+                                    cx.stop_propagation();
+                                    this.wikis.cancel_row_mode(cx);
+                                }),
+                            )
+                            .child("Cancel"),
+                    ),
             );
         if let Some(msg) = error {
             row = row.child(
@@ -355,7 +600,7 @@ impl WikisView {
 
         for (idx, page) in self.pages.iter().enumerate() {
             let is_selected = matches!(&self.selection, Selection::Page(s) if s == &page.slug);
-            pages_list = pages_list.child(page_row(cx, idx, &page.slug, is_selected));
+            pages_list = pages_list.child(self.render_page_row(cx, idx, &page.slug, is_selected));
         }
 
         div()
@@ -424,6 +669,13 @@ fn format_create_error(err: &WikiError) -> String {
             // create_page never returns PageNotFound; defensive default.
             "Could not create page.".into()
         }
+    }
+}
+
+fn format_delete_error(err: &WikiError) -> String {
+    match err {
+        WikiError::Io(io_err) => format!("Could not delete page: {io_err}"),
+        _ => format!("Could not delete page: {err}"),
     }
 }
 
@@ -497,45 +749,3 @@ fn pinned_tab(
         .into_any_element()
 }
 
-fn page_row(
-    cx: &mut Context<crate::Dashboard>,
-    idx: usize,
-    slug: &str,
-    is_selected: bool,
-) -> AnyElement {
-    let slug = slug.to_string();
-    let target = Selection::Page(slug.clone());
-    let stripe_color = if is_selected {
-        adsum_tokens::accent()
-    } else {
-        adsum_tokens::bg_primary()
-    };
-    let mut row = div()
-        .id(("wikis-page", idx))
-        .flex()
-        .flex_row()
-        .border_b_1()
-        .border_color(adsum_tokens::border())
-        .hover(|s| s.bg(adsum_tokens::bg_hover()))
-        .cursor_pointer()
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _event, _window, cx| {
-                this.wikis.select(target.clone(), cx);
-            }),
-        );
-    if is_selected {
-        row = row.bg(adsum_tokens::bg_hover());
-    }
-    row.child(div().w(px(3.0)).h_full().bg(stripe_color))
-        .child(
-            div()
-                .flex_1()
-                .px_4()
-                .py_3()
-                .text_size(px(adsum_tokens::TEXT_BODY))
-                .text_color(adsum_tokens::text_primary())
-                .child(slug),
-        )
-        .into_any_element()
-}
