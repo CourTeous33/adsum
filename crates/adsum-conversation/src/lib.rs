@@ -28,11 +28,7 @@ impl Conversation {
         // Blink for the entity's lifetime — the renderer only paints the
         // cursor while a turn is InProgress, so the toggle is a no-op when
         // idle. Predicate returns true forever; loop ends on entity drop.
-        let task = spawn_blink(
-            cx,
-            |this: &mut Self| &mut this.stream_caret,
-            |_| true,
-        );
+        let task = spawn_blink(cx, |this: &mut Self| &mut this.stream_caret, |_| true);
         stream_caret.set_task(task);
         Self {
             state,
@@ -182,11 +178,7 @@ impl Render for Conversation {
                                 .flex_col()
                                 .gap_1();
                             detail = detail
-                                .child(
-                                    div()
-                                        .text_color(adsum_tokens::text_dim())
-                                        .child("input:"),
-                                )
+                                .child(div().text_color(adsum_tokens::text_dim()).child("input:"))
                                 .child(
                                     div()
                                         .text_color(adsum_tokens::text_primary())
@@ -195,9 +187,7 @@ impl Render for Conversation {
                             if let Some((content, _)) = &result {
                                 detail = detail
                                     .child(
-                                        div()
-                                            .text_color(adsum_tokens::text_dim())
-                                            .child("result:"),
+                                        div().text_color(adsum_tokens::text_dim()).child("result:"),
                                     )
                                     .child(
                                         div()

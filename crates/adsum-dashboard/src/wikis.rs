@@ -35,7 +35,10 @@ enum RowMode {
 #[derive(Debug, Clone)]
 enum HeaderMode {
     Idle,
-    Creating { draft: String, error: Option<String> },
+    Creating {
+        draft: String,
+        error: Option<String>,
+    },
 }
 
 pub struct WikisView {
@@ -250,11 +253,7 @@ impl WikisView {
         }
     }
 
-    fn handle_rename_key(
-        &mut self,
-        event: &KeyDownEvent,
-        cx: &mut Context<crate::Dashboard>,
-    ) {
+    fn handle_rename_key(&mut self, event: &KeyDownEvent, cx: &mut Context<crate::Dashboard>) {
         let key = match &self.row_mode {
             RowMode::Renaming { .. } => event.keystroke.key.clone(),
             _ => return,
@@ -294,11 +293,7 @@ impl WikisView {
         }
     }
 
-    fn handle_create_key(
-        &mut self,
-        event: &KeyDownEvent,
-        cx: &mut Context<crate::Dashboard>,
-    ) {
+    fn handle_create_key(&mut self, event: &KeyDownEvent, cx: &mut Context<crate::Dashboard>) {
         let key = match &self.header_mode {
             HeaderMode::Creating { .. } => event.keystroke.key.clone(),
             HeaderMode::Idle => return,
@@ -371,11 +366,9 @@ impl WikisView {
                     .px_4()
                     .py_3()
                     .text_size(px(adsum_tokens::TEXT_BODY))
-                    .on_key_down(cx.listener(
-                        |this, event: &KeyDownEvent, _window, cx| {
-                            this.wikis.handle_create_key(event, cx);
-                        },
-                    ))
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
+                        this.wikis.handle_create_key(event, cx);
+                    }))
                     // Empty draft → caret first (line start), then placeholder.
                     // Has draft → text first, then caret (cursor at the end).
                     .children(if draft_is_empty {
@@ -418,14 +411,23 @@ impl WikisView {
         is_selected: bool,
     ) -> AnyElement {
         // Mode-specific row rendering takes precedence over the normal label.
-        if let RowMode::Renaming { slug: rename_slug, draft, error } = &self.row_mode {
+        if let RowMode::Renaming {
+            slug: rename_slug,
+            draft,
+            error,
+        } = &self.row_mode
+        {
             if rename_slug == slug {
                 let draft = draft.clone();
                 let error = error.clone();
                 return self.render_rename_row(cx, idx, &draft, error.as_deref());
             }
         }
-        if let RowMode::ConfirmingDelete { slug: confirm_slug, error } = &self.row_mode {
+        if let RowMode::ConfirmingDelete {
+            slug: confirm_slug,
+            error,
+        } = &self.row_mode
+        {
             if confirm_slug == slug {
                 return self.render_delete_confirm_row(cx, idx, slug, error.as_deref());
             }
@@ -576,11 +578,9 @@ impl WikisView {
                     .px_4()
                     .py_3()
                     .text_size(px(adsum_tokens::TEXT_BODY))
-                    .on_key_down(cx.listener(
-                        |this, event: &KeyDownEvent, _window, cx| {
-                            this.wikis.handle_rename_key(event, cx);
-                        },
-                    ))
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
+                        this.wikis.handle_rename_key(event, cx);
+                    }))
                     // Empty draft → caret first (line start), then placeholder.
                     // Has draft → text first, then caret (cursor at the end).
                     .children(if draft_is_empty {
@@ -815,8 +815,7 @@ impl WikisView {
         if let HeaderMode::Creating { draft, error } = &self.header_mode {
             let draft = draft.clone();
             let error = error.clone();
-            pages_list =
-                pages_list.child(self.render_create_row(cx, &draft, error.as_deref()));
+            pages_list = pages_list.child(self.render_create_row(cx, &draft, error.as_deref()));
         }
 
         for (idx, page) in self.pages.iter().enumerate() {
@@ -980,4 +979,3 @@ fn pinned_tab(
         .child(div().mt_2().h(px(2.0)).w(px(24.0)).bg(underline))
         .into_any_element()
 }
-

@@ -1,19 +1,19 @@
-use adsum_ui::caret::{Caret, spawn_blink};
 use adsum_conversation::Conversation;
 use adsum_llm::LlmService;
 use adsum_settings::Settings;
 use adsum_state::AppState;
+use adsum_ui::caret::{spawn_blink, Caret};
 use gpui::{
-    App, Bounds, Context, FocusHandle, Focusable, KeyDownEvent, Pixels, Render, Subscription,
-    Window, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, div, point,
-    prelude::*, px, size,
+    div, point, prelude::*, px, size, App, Bounds, Context, FocusHandle, Focusable, KeyDownEvent,
+    Pixels, Render, Subscription, Window, WindowBackgroundAppearance, WindowBounds, WindowKind,
+    WindowOptions,
 };
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 mod parse;
-pub use parse::{ChatboxInput, parse_chatbox_input};
+pub use parse::{parse_chatbox_input, ChatboxInput};
 
 pub struct Chatbox {
     current_text: String,
@@ -56,12 +56,7 @@ impl Chatbox {
             // chatbox before the popup's becomeKey has propagated to GPUI's
             // per-window `active` cell. Yield ~80ms so the ordering settles,
             // then re-check both windows on the foreground tick.
-            let conv_handle = this
-                .conversation_slot
-                .lock()
-                .unwrap()
-                .as_ref()
-                .copied();
+            let conv_handle = this.conversation_slot.lock().unwrap().as_ref().copied();
             let chatbox_window: gpui::WindowHandle<Self> = window
                 .window_handle()
                 .downcast::<Self>()
@@ -76,9 +71,7 @@ impl Chatbox {
                         return;
                     }
                     // Popup is now active (user clicked into it): keep alive.
-                    let conv_active = conv_handle
-                        .and_then(|h| h.is_active(cx))
-                        .unwrap_or(false);
+                    let conv_active = conv_handle.and_then(|h| h.is_active(cx)).unwrap_or(false);
                     if conv_active {
                         return;
                     }
@@ -368,30 +361,26 @@ impl Render for Chatbox {
             // Empty text → caret first then placeholder (start of line).
             // Has text → text first then caret (cursor at the end, moves
             // right with each keypress).
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .children(if self.current_text.is_empty() {
-                        vec![
-                            self.caret.render(),
-                            div()
-                                .ml_1()
-                                .text_color(display_text.1)
-                                .child(display_text.0)
-                                .into_any_element(),
-                        ]
-                    } else {
-                        vec![
-                            div()
-                                .text_color(display_text.1)
-                                .child(display_text.0)
-                                .into_any_element(),
-                            self.caret.render(),
-                        ]
-                    }),
-            )
+            .child(div().flex().flex_row().items_center().children(
+                if self.current_text.is_empty() {
+                    vec![
+                        self.caret.render(),
+                        div()
+                            .ml_1()
+                            .text_color(display_text.1)
+                            .child(display_text.0)
+                            .into_any_element(),
+                    ]
+                } else {
+                    vec![
+                        div()
+                            .text_color(display_text.1)
+                            .child(display_text.0)
+                            .into_any_element(),
+                        self.caret.render(),
+                    ]
+                },
+            ))
     }
 }
 

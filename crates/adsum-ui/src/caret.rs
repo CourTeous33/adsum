@@ -65,25 +65,23 @@ where
     F: Fn(&mut E) -> &mut Caret + Copy + 'static,
     P: Fn(&E) -> bool + Copy + 'static,
 {
-    cx.spawn(async move |this, cx| {
-        loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(500))
-                .await;
-            let keep_going = this
-                .update(cx, |entity, cx| {
-                    if !should_continue(entity) {
-                        return false;
-                    }
-                    let caret = accessor(entity);
-                    caret.visible = !caret.visible;
-                    cx.notify();
-                    true
-                })
-                .unwrap_or(false);
-            if !keep_going {
-                break;
-            }
+    cx.spawn(async move |this, cx| loop {
+        cx.background_executor()
+            .timer(Duration::from_millis(500))
+            .await;
+        let keep_going = this
+            .update(cx, |entity, cx| {
+                if !should_continue(entity) {
+                    return false;
+                }
+                let caret = accessor(entity);
+                caret.visible = !caret.visible;
+                cx.notify();
+                true
+            })
+            .unwrap_or(false);
+        if !keep_going {
+            break;
         }
     })
 }

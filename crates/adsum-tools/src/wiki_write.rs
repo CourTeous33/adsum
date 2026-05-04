@@ -70,7 +70,9 @@ impl Tool for WikiWriteTool {
                     (false, true)
                 }
                 ("log", _) => {
-                    return Err(WikiError::InvalidSlug("log only supports mode=append".into()));
+                    return Err(WikiError::InvalidSlug(
+                        "log only supports mode=append".into(),
+                    ));
                 }
                 (slug_str, "create") => {
                     let existed = s.read_page(slug_str).is_ok();

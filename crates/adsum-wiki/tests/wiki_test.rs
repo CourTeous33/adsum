@@ -200,7 +200,9 @@ fn create_page_writes_file_with_content_and_lists_it() {
     let dir = tempdir().expect("tempdir");
     let store = WikiStore::open(dir.path().to_path_buf()).expect("open");
 
-    store.create_page("hello", "# Hello\n\nbody\n").expect("create");
+    store
+        .create_page("hello", "# Hello\n\nbody\n")
+        .expect("create");
 
     let body = store.read_page("hello").expect("read");
     assert_eq!(body, "# Hello\n\nbody\n");
@@ -251,7 +253,10 @@ fn delete_page_removes_file_and_drops_from_list() {
     assert!(pages.is_empty(), "deleted page should not appear in list");
 
     let result = store.read_page("temp");
-    assert!(matches!(result, Err(adsum_wiki::WikiError::PageNotFound(_))));
+    assert!(matches!(
+        result,
+        Err(adsum_wiki::WikiError::PageNotFound(_))
+    ));
 }
 
 #[test]
@@ -342,8 +347,14 @@ fn rename_page_rejects_invalid_slugs_in_either_position() {
     store.create_page("ok", "x").expect("create");
 
     let bad_old = store.rename_page("Bad Slug", "ok2");
-    assert!(matches!(bad_old, Err(adsum_wiki::WikiError::InvalidSlug(_))));
+    assert!(matches!(
+        bad_old,
+        Err(adsum_wiki::WikiError::InvalidSlug(_))
+    ));
 
     let bad_new = store.rename_page("ok", "Bad New");
-    assert!(matches!(bad_new, Err(adsum_wiki::WikiError::InvalidSlug(_))));
+    assert!(matches!(
+        bad_new,
+        Err(adsum_wiki::WikiError::InvalidSlug(_))
+    ));
 }
